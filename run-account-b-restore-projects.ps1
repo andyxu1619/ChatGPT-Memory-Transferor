@@ -369,7 +369,8 @@ function Get-RestoreItemsFromPath {
     }
 
     $status = Safe-Text $row.status
-    if ($status -eq "error" -or $status -eq "missing" -or $status -eq "dry-run" -or $status -like "duplicate*") {
+    # Duplicate rows can carry usable imported IDs from prior reports; keep them restorable.
+    if ($status -eq "error" -or $status -eq "missing" -or $status -eq "dry-run") {
       continue
     }
 
@@ -646,6 +647,9 @@ function Invoke-ProjectRestore {
       prompt_starters: Array.isArray(value.prompt_starters) ? value.prompt_starters : [],
       memory_scope: normalize(value.memory_scope),
       training_disabled: value.training_disabled === true,
+      sharing: value.sharing && typeof value.sharing === "object" ? value.sharing : null,
+      sharing_recipient: normalize(value.sharing_recipient || value.share_recipient),
+      sharing_targets: Array.isArray(value.sharing_targets) ? value.sharing_targets : [],
       files: Array.isArray(value.files) ? value.files : []
     };
   }
@@ -682,6 +686,14 @@ function Invoke-ProjectRestore {
   }
 
   function buildCreateProjectPayload(project) {
+    const normalizeSharing = (sharing, recipient) => {
+      const source = sharing && typeof sharing === "object" ? sharing : {};
+      const normalizedRecipient = normalize(source.recipient || recipient) || "private";
+      return {
+        subjects: Array.isArray(source.subjects) ? source.subjects : [],
+        recipient: normalizedRecipient
+      };
+    };
     const display = {
       name: project.name,
       description: project.description || "",
@@ -696,6 +708,7 @@ function Invoke-ProjectRestore {
       display,
       tools: [],
       files: [],
+      sharing: normalizeSharing(project.sharing, project.sharing_recipient),
       memory_scope: project.memory_scope || "unset",
       training_disabled: project.training_disabled === true,
       categories: undefined

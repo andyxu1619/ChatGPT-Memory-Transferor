@@ -217,6 +217,9 @@
       prompt_starters: Array.isArray(display.prompt_starters) ? display.prompt_starters : (existing.prompt_starters || []),
       memory_scope: firstNonEmpty(rawProject.memory_scope, existing.memory_scope),
       training_disabled: rawProject.training_disabled ?? existing.training_disabled ?? null,
+      sharing: rawProject.sharing || existing.sharing || null,
+      sharing_recipient: firstNonEmpty(rawProject.share_recipient, existing.sharing_recipient),
+      sharing_targets: Array.isArray(rawProject.sharing_targets) ? rawProject.sharing_targets : (existing.sharing_targets || []),
       use_injest_path: rawProject.use_injest_path ?? existing.use_injest_path ?? null,
       is_archived: rawProject.is_archived ?? existing.is_archived ?? false,
       conversation_count_hint: Math.max(

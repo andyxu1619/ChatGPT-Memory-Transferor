@@ -62,6 +62,17 @@ $html = Get-Content -Raw -LiteralPath $htmlPath
 Assert-Contains -Content $html -Pattern "normalizeShareUrl" -Message "Manual HTML tool must validate shared-link URLs."
 Assert-Contains -Content $html -Pattern "chatgpt.com" -Message "Manual HTML tool must allow ChatGPT share links explicitly."
 
+$bImportScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "run-account-b-shared-link-import.ps1")
+Assert-Contains -Content $bImportScript -Pattern "不会把共享链接页当作导入成功" -Message "B import must require a durable /c/{id} URL before reporting imported."
+Assert-Contains -Content $bImportScript -Pattern "match_imported_id" -Message "Duplicate detection must preserve imported conversation IDs."
+
+$aExportScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "run-account-a-share-link-export.ps1")
+Assert-Contains -Content $aExportScript -Pattern "Invoke-BrowserDownloadFile" -Message "A export must have a browser-download fallback for project files."
+
+$restoreScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "run-account-b-restore-projects.ps1")
+Assert-Contains -Content $restoreScript -Pattern "Duplicate rows can carry usable imported IDs" -Message "Project restore must keep duplicate rows with usable imported IDs eligible."
+Assert-Contains -Content $restoreScript -Pattern "sharing: normalizeSharing" -Message "Project creation must send the required sharing payload."
+
 $gitignorePath = Join-Path $repoRoot ".gitignore"
 if (-not (Test-Path -LiteralPath $gitignorePath)) {
   Add-Failure ".gitignore is missing."

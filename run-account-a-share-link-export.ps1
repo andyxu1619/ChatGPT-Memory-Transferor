@@ -440,6 +440,85 @@ function Get-ProjectFileDownloadUrl {
   return [string]$value.download_url
 }
 
+function Invoke-BrowserDownloadFile {
+  param(
+    [System.Net.WebSockets.ClientWebSocket]$WebSocket,
+    [string]$DownloadUrl,
+    [string]$TargetPath,
+    [int64]$ExpectedSize
+  )
+
+  if ([string]::IsNullOrWhiteSpace($DownloadUrl)) {
+    throw "下载地址为空。"
+  }
+
+  $targetDir = Split-Path -Parent $TargetPath
+  $downloadDir = Join-Path $targetDir (".download-" + [guid]::NewGuid().ToString("N"))
+  New-Item -ItemType Directory -Force -Path $downloadDir | Out-Null
+
+  try {
+    $downloadBehaviorParams = @{
+      behavior = "allow"
+      downloadPath = $downloadDir
+    }
+    try {
+      Invoke-Cdp -WebSocket $WebSocket -Method "Browser.setDownloadBehavior" -Params $downloadBehaviorParams | Out-Null
+    } catch {
+      Invoke-Cdp -WebSocket $WebSocket -Method "Page.setDownloadBehavior" -Params $downloadBehaviorParams | Out-Null
+    }
+
+    $downloadUrlJson = $DownloadUrl | ConvertTo-Json -Compress
+    $targetNameJson = (Split-Path -Leaf $TargetPath) | ConvertTo-Json -Compress
+    $expression = @"
+(() => {
+  const url = $downloadUrlJson;
+  const fileName = $targetNameJson;
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  setTimeout(() => anchor.remove(), 1000);
+  return true;
+})()
+"@
+
+    Invoke-Cdp -WebSocket $WebSocket -Method "Runtime.evaluate" -Params @{
+      expression = $expression
+      returnByValue = $true
+    } | Out-Null
+
+    $deadline = (Get-Date).AddSeconds(1800)
+    while ((Get-Date) -lt $deadline) {
+      $partialFiles = @(Get-ChildItem -File -Path $downloadDir -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*.crdownload" })
+      $completeFiles = @(Get-ChildItem -File -Path $downloadDir -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike "*.crdownload" })
+      if ($completeFiles.Count -gt 0 -and $partialFiles.Count -eq 0) {
+        $candidate = $completeFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($ExpectedSize -le 0 -or $candidate.Length -eq $ExpectedSize) {
+          if (Test-Path -LiteralPath $TargetPath) {
+            Remove-Item -LiteralPath $TargetPath -Force
+          }
+          Move-Item -LiteralPath $candidate.FullName -Destination $TargetPath
+          return
+        }
+        throw "浏览器下载完成但文件大小不匹配：期望 $ExpectedSize，实际 $($candidate.Length)。"
+      }
+      Start-Sleep -Milliseconds 500
+    }
+
+    throw "等待浏览器下载完成超时。"
+  } finally {
+    try {
+      if ((Test-Path -LiteralPath $downloadDir) -and @((Get-ChildItem -LiteralPath $downloadDir -Force -ErrorAction SilentlyContinue)).Count -eq 0) {
+        Remove-Item -LiteralPath $downloadDir -Force
+      }
+    } catch {
+    }
+  }
+}
+
 function Save-ProjectFiles {
   param(
     [System.Net.WebSockets.ClientWebSocket]$WebSocket,
@@ -502,7 +581,16 @@ function Save-ProjectFiles {
 
         Write-Host "[file] 下载项目附件：$($project.name) / $($file.name)"
         $downloadUrl = Get-ProjectFileDownloadUrl -WebSocket $WebSocket -ProjectId $projectId -FileId $fileId
-        Invoke-WebRequest -Uri $downloadUrl -UseBasicParsing -OutFile $targetPath -TimeoutSec 1800 | Out-Null
+        $downloadUri = $downloadUrl
+        if ($downloadUri.StartsWith("/")) {
+          $downloadUri = "https://chatgpt.com$downloadUri"
+        }
+        try {
+          Invoke-WebRequest -Uri $downloadUri -UseBasicParsing -OutFile $targetPath -TimeoutSec 1800 | Out-Null
+        } catch {
+          Write-Host "[file:fallback] PowerShell 下载失败，改用浏览器下载：$($_.Exception.Message)" -ForegroundColor Yellow
+          Invoke-BrowserDownloadFile -WebSocket $WebSocket -DownloadUrl $downloadUrl -TargetPath $targetPath -ExpectedSize $expectedSize
+        }
 
         $downloaded += 1
         $file | Add-Member -NotePropertyName local_path -NotePropertyValue $targetPath -Force

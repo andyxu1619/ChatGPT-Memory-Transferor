@@ -270,6 +270,10 @@ function Add-DuplicateRecord {
 
   $record = New-DuplicateRecord -Status $recordStatus -Reason $recordReason -MatchSource $MatchSource -Row $Row
 
+  if (-not $BrowserMatch -and [string]::IsNullOrWhiteSpace($record.match_imported_id)) {
+    return
+  }
+
   $sourceId = Safe-Text $Row.id
   if (-not $BrowserMatch -and -not [string]::IsNullOrWhiteSpace($sourceId) -and -not $Index.BySourceId.ContainsKey($sourceId)) {
     $Index.BySourceId[$sourceId] = $record
@@ -1219,12 +1223,23 @@ function Invoke-OrchestratedImport {
         throw "发送触发消息失败。"
       }
 
-      $timer.Stop()
       $importedUrl = [string]$sendResult.href
       if ([string]::IsNullOrWhiteSpace($importedUrl)) {
         $importedUrl = Get-PageHref -WebSocket $WebSocket
       }
       $importedId = Get-ConversationIdFromUrl -Url $importedUrl
+      $redirectDeadline = (Get-Date).AddSeconds(30)
+      while ([string]::IsNullOrWhiteSpace($importedId) -and (Get-Date) -lt $redirectDeadline) {
+        Start-Sleep -Seconds 1
+        $importedUrl = Get-PageHref -WebSocket $WebSocket
+        $importedId = Get-ConversationIdFromUrl -Url $importedUrl
+      }
+
+      if ([string]::IsNullOrWhiteSpace($importedId)) {
+        throw "发送触发消息后没有进入 B 账号 /c/{id} 对话页，当前页面：$importedUrl，证据：$($sendResult.evidence)。不会把共享链接页当作导入成功。"
+      }
+
+      $timer.Stop()
 
       Write-Host "[ok] $title -> $importedUrl ($($sendResult.evidence))"
       $results += [pscustomobject]@{
