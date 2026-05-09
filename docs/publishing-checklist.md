@@ -3,7 +3,9 @@
 - [ ] Browser profiles are not committed.
 - [ ] `outputs/` reports, logs, debug captures, downloaded attachments, and real shared links are not committed.
 - [ ] `.gitignore` is present and covers local runtime artifacts.
-- [ ] `README.md` describes installation, configuration, usage, safety notes, FAQ, license, and maintenance status.
+- [ ] `README.md` is a concise project entrypoint and links to `docs/project-details.md`.
+- [ ] `docs/project-details.md` contains detailed workflow, configuration, command, security, limitation, and troubleshooting notes.
+- [ ] `SECURITY.md` is present and lists `andyxu3076@gmail.com` as the security contact.
 - [ ] `LICENSE` is present.
 - [ ] `CHANGELOG.md` is present.
 - [ ] `CONTRIBUTING.md` is present.

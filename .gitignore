@@ -1,10 +1,14 @@
 # Local browser profiles and login state
 browser-profile-account-a/
 browser-profile-account-b/
+browser-profile-*/
 
 # Runtime outputs, downloaded attachments, reports, and debug captures
 outputs/
 downloads/
+logs/
+reports/
+.cache/
 tmp/
 temp/
 *.log

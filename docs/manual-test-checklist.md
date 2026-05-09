@@ -2,6 +2,8 @@
 
 Use non-sensitive conversations for every release test.
 
+See [Project Details](project-details.md) for workflow context and [Security Policy](../SECURITY.md) for data-handling rules.
+
 ## Preflight
 
 - Confirm `browser-profile-account-a/`, `browser-profile-account-b/`, and `outputs/` are ignored by Git.
@@ -22,6 +24,7 @@ Expected result:
 - Login state is detected after signing in.
 - A JSON and CSV report are written under `outputs/`.
 - The JSON contains at least one `results[].share_url` with `https://chatgpt.com/share/`.
+- Use one non-sensitive conversation for the first export test.
 
 ## B Account Import
 
@@ -36,6 +39,8 @@ Expected result:
 - Real run asks for `YES` before sending.
 - B account history shows the imported conversation after completion.
 - Report status is `imported`, `duplicate`, or a clear `error`.
+- Use 1 to 3 non-sensitive shared links for the first import test.
+- Confirm dry-run mode does not perform real imports or overwrite target-account content.
 
 ## Project Restore
 
@@ -48,6 +53,10 @@ Expected result:
 - Script reads the latest import/export report.
 - Dry run lists projects that would be created and chats that would be moved.
 - No projects, chats, or files are changed in dry run mode.
+- Test a conversation with no project membership.
+- Test an empty project or a source project with no imported conversations.
+- Test a conversation with project membership and confirm it is restored to the expected target project.
+- Test one non-sensitive small attachment sample before trying larger attachment batches.
 
 ## Manual HTML Fallback
 
@@ -55,3 +64,11 @@ Expected result:
 - Load `examples/account-a-export.sample.json`.
 - Confirm the sample link appears.
 - Confirm malformed or non-ChatGPT share URLs are rejected.
+
+## Security And Git Hygiene
+
+- Confirm illegal shared-link domains are rejected by import and manual fallback flows.
+- Confirm `outputs/` remains untracked after export, import, restore, and validation runs.
+- Confirm `browser-profile-account-a/`, `browser-profile-account-b/`, and `browser-profile-*/` remain ignored.
+- Confirm `logs/`, `reports/`, `.cache/`, and `.env` files remain ignored.
+- Confirm no real shared links, account identifiers, attachment paths, cookies, tokens, or local storage data are staged before commit.

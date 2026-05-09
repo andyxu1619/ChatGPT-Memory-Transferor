@@ -5,6 +5,9 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $failures = New-Object System.Collections.Generic.List[string]
 $currentUserName = ""
+$expectedCloneUrl = "https://github.com/example-user/ChatGPT-Memory-Transferor.git"
+$securityEmail = "andyxu3076@gmail.com"
+
 if ($env:USERPROFILE) {
   $currentUserName = Split-Path -Leaf $env:USERPROFILE
 }
@@ -14,6 +17,30 @@ function Add-Failure {
   $failures.Add($Message) | Out-Null
 }
 
+function ConvertTo-RepoPath {
+  param([string]$Path)
+
+  $fullPath = [System.IO.Path]::GetFullPath($Path)
+  $rootPath = [System.IO.Path]::GetFullPath($repoRoot).TrimEnd("\")
+  if ($fullPath.StartsWith($rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+    return $fullPath.Substring($rootPath.Length).TrimStart("\") -replace "\\", "/"
+  }
+
+  return $Path -replace "\\", "/"
+}
+
+function Invoke-GitLines {
+  param([string[]]$Arguments)
+
+  $output = & git @Arguments 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    Add-Failure "Git command failed: git $($Arguments -join ' ')"
+    return @()
+  }
+
+  return @($output) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+}
+
 function Test-PowerShellSyntax {
   param([string]$Path)
 
@@ -21,7 +48,7 @@ function Test-PowerShellSyntax {
   $errors = $null
   [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$errors) | Out-Null
   foreach ($errorItem in @($errors)) {
-    Add-Failure "PowerShell syntax error in ${Path}: $($errorItem.Message)"
+    Add-Failure "PowerShell syntax error in $(ConvertTo-RepoPath $Path): $($errorItem.Message)"
   }
 }
 
@@ -36,7 +63,7 @@ function Test-NodeSyntax {
 
   $process = Start-Process -FilePath $node.Source -ArgumentList @("--check", $Path) -Wait -NoNewWindow -PassThru
   if ($process.ExitCode -ne 0) {
-    Add-Failure "JavaScript syntax check failed: $Path"
+    Add-Failure "JavaScript syntax check failed: $(ConvertTo-RepoPath $Path)"
   }
 }
 
@@ -52,7 +79,187 @@ function Assert-Contains {
   }
 }
 
+function Get-TrackedTextFiles {
+  param([string[]]$TrackedFiles)
+
+  foreach ($trackedFile in $TrackedFiles) {
+    $extension = [System.IO.Path]::GetExtension($trackedFile).ToLowerInvariant()
+    if ($extension -notin @(".md", ".ps1", ".js", ".html", ".json", ".gitignore", ".cmd", "")) {
+      continue
+    }
+
+    $path = Join-Path $repoRoot $trackedFile
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+      [pscustomobject]@{
+        Path = $path
+        RepoPath = $trackedFile -replace "\\", "/"
+        Content = Get-Content -Raw -LiteralPath $path -ErrorAction SilentlyContinue
+      }
+    }
+  }
+}
+
+function Test-TrackedPathSafety {
+  param([string[]]$TrackedFiles)
+
+  $sensitivePathPatterns = @(
+    @{ Name = "browser profile path"; Pattern = "(^|/)browser-profile-account-a(/|$)" },
+    @{ Name = "browser profile path"; Pattern = "(^|/)browser-profile-account-b(/|$)" },
+    @{ Name = "browser profile wildcard path"; Pattern = "(^|/)browser-profile-[^/]+(/|$)" },
+    @{ Name = "outputs path"; Pattern = "(^|/)outputs(/|$)" },
+    @{ Name = "archived launchers path"; Pattern = "(^|/)archived-launchers(/|$)" },
+    @{ Name = "environment file"; Pattern = "(^|/)\.env($|\.|/)" },
+    @{ Name = "logs path"; Pattern = "(^|/)logs(/|$)" },
+    @{ Name = "reports path"; Pattern = "(^|/)reports(/|$)" },
+    @{ Name = "cache path"; Pattern = "(^|/)\.cache(/|$)" }
+  )
+
+  foreach ($trackedFile in $TrackedFiles) {
+    $repoPath = $trackedFile -replace "\\", "/"
+    foreach ($entry in $sensitivePathPatterns) {
+      if ($repoPath -match $entry.Pattern) {
+        Add-Failure "Tracked file is in a sensitive location ($($entry.Name)): $repoPath"
+      }
+    }
+  }
+}
+
+function Test-TrackedIgnoredFiles {
+  $trackedIgnoredFiles = Invoke-GitLines -Arguments @("ls-files", "-ci", "--exclude-standard")
+  foreach ($trackedIgnoredFile in $trackedIgnoredFiles) {
+    Add-Failure "Tracked file is ignored by .gitignore: $($trackedIgnoredFile -replace '\\', '/')"
+  }
+}
+
+function Test-ContentSafety {
+  param([object[]]$TextFiles)
+
+  $realShareUrlPattern = "https://(?:chatgpt\.com|chat\.openai\.com)/share/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+  $hardcodedSecretPatterns = @(
+    @{ Name = "hardcoded bearer token"; Pattern = "(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{20,}" },
+    @{ Name = "hardcoded API key"; Pattern = '(?i)\b(api[_-]?key|apikey)\b\s*[:=]\s*["\x27][^"\x27]{12,}["\x27]' },
+    @{ Name = "hardcoded password"; Pattern = '(?i)\bpassword\b\s*[:=]\s*["\x27][^"\x27]{8,}["\x27]' },
+    @{ Name = "hardcoded secret"; Pattern = '(?i)\bsecret\b\s*[:=]\s*["\x27][^"\x27]{8,}["\x27]' },
+    @{ Name = "hardcoded authorization header"; Pattern = '(?i)\bauthorization\b\s*[:=]\s*["\x27](?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{20,}["\x27]' },
+    @{ Name = "hardcoded cookie"; Pattern = '(?i)\bcookie\b\s*[:=]\s*["\x27][^"\x27]{12,}["\x27]' }
+  )
+
+  foreach ($file in $TextFiles) {
+    $content = [string]$file.Content
+    if ([string]::IsNullOrEmpty($content)) {
+      continue
+    }
+
+    if ($content -match $realShareUrlPattern) {
+      Add-Failure "Tracked file may contain a real ChatGPT shared link: $($file.RepoPath)"
+    }
+
+    if ($content -match "[A-Za-z]:\\Users\\") {
+      Add-Failure "Tracked file contains a local Windows user path: $($file.RepoPath)"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($currentUserName) -and $content -match [regex]::Escape($currentUserName)) {
+      Add-Failure "Tracked file contains the current local username: $($file.RepoPath)"
+    }
+
+    foreach ($entry in $hardcodedSecretPatterns) {
+      if ($content -match $entry.Pattern) {
+        Add-Failure "Tracked file may contain $($entry.Name): $($file.RepoPath)"
+      }
+    }
+  }
+}
+
+function Test-RepositoryPlaceholders {
+  param([object[]]$TextFiles)
+
+  $placeholderPatterns = @(
+    ("your-" + "name"),
+    ("your-" + "repo"),
+    ("user" + "name/" + "repo" + "-name"),
+    ("<your-" + "org-or-user>"),
+    ("github.com/" + "<")
+  )
+
+  foreach ($file in $TextFiles) {
+    $content = [string]$file.Content
+    foreach ($pattern in $placeholderPatterns) {
+      if ($content -match [regex]::Escape($pattern)) {
+        Add-Failure "Tracked file contains repository placeholder '$pattern': $($file.RepoPath)"
+      }
+    }
+  }
+}
+
+function Test-EmailConsistency {
+  param([object[]]$TextFiles)
+
+  $emailPattern = "\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b"
+  foreach ($file in $TextFiles) {
+    foreach ($match in [regex]::Matches([string]$file.Content, $emailPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+      if ($match.Value -ne $securityEmail) {
+        Add-Failure "Tracked file contains an unexpected email address: $($file.RepoPath)"
+      }
+    }
+  }
+
+  foreach ($requiredEmailFile in @("README.md", "SECURITY.md", "CONTRIBUTING.md")) {
+    $path = Join-Path $repoRoot $requiredEmailFile
+    if ((Test-Path -LiteralPath $path) -and ((Get-Content -Raw -LiteralPath $path) -notmatch [regex]::Escape($securityEmail))) {
+      Add-Failure "$requiredEmailFile must contain the security contact email."
+    }
+  }
+}
+
+function Test-MarkdownLocalLinks {
+  param([object[]]$TextFiles)
+
+  foreach ($file in $TextFiles) {
+    if ([System.IO.Path]::GetExtension($file.RepoPath).ToLowerInvariant() -ne ".md") {
+      continue
+    }
+
+    $baseDir = Split-Path -Parent $file.Path
+    foreach ($match in [regex]::Matches([string]$file.Content, "\[[^\]]+\]\(([^)]+)\)")) {
+      $target = $match.Groups[1].Value.Trim()
+      if ([string]::IsNullOrWhiteSpace($target)) {
+        continue
+      }
+
+      if ($target.StartsWith("#") -or
+          $target -match "^[a-z][a-z0-9+.-]*:" -or
+          $target.StartsWith("mailto:", [System.StringComparison]::OrdinalIgnoreCase)) {
+        continue
+      }
+
+      $targetPath = ($target -split "#", 2)[0].Trim()
+      if ([string]::IsNullOrWhiteSpace($targetPath)) {
+        continue
+      }
+
+      $normalizedTarget = $targetPath -replace "/", [System.IO.Path]::DirectorySeparatorChar
+      $resolvedPath = [System.IO.Path]::GetFullPath((Join-Path $baseDir $normalizedTarget))
+      if (-not (Test-Path -LiteralPath $resolvedPath)) {
+        Add-Failure "Markdown local link target is missing in $($file.RepoPath): $target"
+      }
+    }
+  }
+}
+
 Set-Location -LiteralPath $repoRoot
+
+$trackedFiles = Invoke-GitLines -Arguments @("ls-files")
+$requiredContentFiles = @(
+  "README.md",
+  "CHANGELOG.md",
+  "CONTRIBUTING.md",
+  "SECURITY.md",
+  "docs/project-details.md",
+  "docs/manual-test-checklist.md",
+  "docs/publishing-checklist.md"
+)
+$contentScanFiles = @($trackedFiles + $requiredContentFiles) | Sort-Object -Unique
+$trackedTextFiles = @(Get-TrackedTextFiles -TrackedFiles $contentScanFiles)
 
 Get-ChildItem -File -Filter "*.ps1" | ForEach-Object { Test-PowerShellSyntax -Path $_.FullName }
 Get-ChildItem -File -Filter "*.js" | ForEach-Object { Test-NodeSyntax -Path $_.FullName }
@@ -81,8 +288,15 @@ if (-not (Test-Path -LiteralPath $gitignorePath)) {
   foreach ($required in @(
     "browser-profile-account-a/",
     "browser-profile-account-b/",
+    "browser-profile-*/",
     "outputs/",
+    "archived-launchers/",
     ".env",
+    ".env.*",
+    "*.log",
+    "logs/",
+    "reports/",
+    ".cache/",
     "node_modules/",
     "__pycache__/",
     ".DS_Store"
@@ -91,35 +305,53 @@ if (-not (Test-Path -LiteralPath $gitignorePath)) {
   }
 }
 
-foreach ($requiredFile in @("README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md")) {
+foreach ($requiredFile in @(
+  "README.md",
+  "LICENSE",
+  "CHANGELOG.md",
+  "CONTRIBUTING.md",
+  "SECURITY.md",
+  "docs/project-details.md",
+  "docs/manual-test-checklist.md",
+  "docs/publishing-checklist.md"
+)) {
   if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $requiredFile))) {
     Add-Failure "$requiredFile is missing."
   }
 }
 
-$publishableFiles = Get-ChildItem -Recurse -File |
-  Where-Object {
-    $_.FullName -notmatch "\\browser-profile-account-[ab]\\" -and
-    $_.FullName -notmatch "\\outputs\\" -and
-    $_.FullName -notmatch "\\archived-launchers\\"
-  }
+$readmePath = Join-Path $repoRoot "README.md"
+if (Test-Path -LiteralPath $readmePath) {
+  $readme = Get-Content -Raw -LiteralPath $readmePath
+  Assert-Contains -Content $readme -Pattern "# ChatGPT Memory Transferor" -Message "README must use the official project name."
+  Assert-Contains -Content $readme -Pattern $expectedCloneUrl -Message "README clone URL must point to the real GitHub repository."
+  Assert-Contains -Content $readme -Pattern "docs/project-details.md" -Message "README must link to docs/project-details.md."
 
-foreach ($file in $publishableFiles) {
-  $extension = $file.Extension.ToLowerInvariant()
-  if ($extension -notin @(".md", ".ps1", ".js", ".html", ".json", ".gitignore", "")) {
-    continue
-  }
-
-  $content = Get-Content -Raw -LiteralPath $file.FullName -ErrorAction SilentlyContinue
-  $containsLocalUserName = $false
-  if (-not [string]::IsNullOrWhiteSpace($currentUserName)) {
-    $containsLocalUserName = $content -match [regex]::Escape($currentUserName)
-  }
-
-  if ($content -match "[A-Za-z]:\\Users\\" -or $containsLocalUserName) {
-    Add-Failure "Publishable file contains a local user path or username: $($file.FullName)"
+  foreach ($pattern in @(
+    ("your-" + "name"),
+    ("your-" + "repo"),
+    ("user" + "name/" + "repo" + "-name"),
+    ("<your-" + "org-or-user>"),
+    ("github.com/" + "<")
+  )) {
+    if ($readme -match [regex]::Escape($pattern)) {
+      Add-Failure "README contains a placeholder repository address."
+    }
   }
 }
+
+$projectDetailsPath = Join-Path $repoRoot "docs/project-details.md"
+if (Test-Path -LiteralPath $projectDetailsPath) {
+  $projectDetails = Get-Content -Raw -LiteralPath $projectDetailsPath
+  Assert-Contains -Content $projectDetails -Pattern "[Back to README](../README.md)" -Message "Project details must link back to README."
+}
+
+Test-TrackedPathSafety -TrackedFiles $trackedFiles
+Test-TrackedIgnoredFiles
+Test-ContentSafety -TextFiles $trackedTextFiles
+Test-RepositoryPlaceholders -TextFiles $trackedTextFiles
+Test-EmailConsistency -TextFiles $trackedTextFiles
+Test-MarkdownLocalLinks -TextFiles $trackedTextFiles
 
 if ($failures.Count -gt 0) {
   Write-Host "Release validation failed:" -ForegroundColor Red
