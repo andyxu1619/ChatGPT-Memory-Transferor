@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChatGPT 共享链接迁移导航</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      line-height: 1.5;
+    }
+
+    body {
+      margin: 0;
+      background: Canvas;
+      color: CanvasText;
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 28px 18px 56px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      font-weight: 650;
+    }
+
+    p {
+      margin: 8px 0;
+    }
+
+    .toolbar,
+    .current,
+    .list {
+      border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 16px;
+    }
+
+    .toolbar {
+      display: grid;
+      gap: 12px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 150px;
+      box-sizing: border-box;
+      padding: 10px;
+      font: 13px/1.45 Consolas, "Cascadia Mono", monospace;
+      border-radius: 6px;
+      border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
+      background: Canvas;
+      color: CanvasText;
+      resize: vertical;
+    }
+
+    button,
+    input[type="file"]::file-selector-button {
+      min-height: 36px;
+      border-radius: 6px;
+      border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
+      background: ButtonFace;
+      color: ButtonText;
+      padding: 7px 12px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    button.primary {
+      background: #1769aa;
+      border-color: #1769aa;
+      color: white;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .muted {
+      color: color-mix(in srgb, CanvasText 60%, transparent);
+      font-size: 13px;
+    }
+
+    .title {
+      font-weight: 650;
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    .url {
+      overflow-wrap: anywhere;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 13px;
+    }
+
+    ol {
+      padding-left: 22px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+      padding: 7px 6px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    tr.done {
+      opacity: 0.48;
+    }
+
+    .index {
+      width: 72px;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ChatGPT 共享链接迁移导航</h1>
+    <p>用 B 账号打开 A 账号生成的共享链接，逐条发送一条短消息，让 ChatGPT 在 B 账号历史里生成副本。</p>
+
+    <section class="toolbar">
+      <div>
+        <input id="fileInput" type="file" accept=".json,application/json">
+      </div>
+      <textarea id="jsonInput" placeholder="也可以把 account-a-create-share-links.js 下载的 JSON 内容粘贴到这里"></textarea>
+      <div class="buttons">
+        <button id="loadButton" class="primary">加载链接清单</button>
+        <button id="resetButton">重置进度</button>
+        <span id="summary" class="muted">尚未加载</span>
+      </div>
+    </section>
+
+    <section class="current">
+      <div id="currentTitle" class="title">当前没有待处理链接</div>
+      <div id="currentUrl" class="url muted"></div>
+      <p class="muted">建议在 B 账号里发送的触发消息：</p>
+      <textarea id="promptText" readonly>请基于这个共享对话继续。请只回复：已接收。</textarea>
+      <div class="buttons">
+        <button id="openButton" class="primary" disabled>打开当前链接</button>
+        <button id="copyPromptButton" disabled>复制触发消息</button>
+        <button id="doneButton" disabled>标记完成并下一个</button>
+        <button id="skipButton" disabled>跳过这个</button>
+      </div>
+    </section>
+
+    <section class="list">
+      <p><strong>操作顺序</strong></p>
+      <ol>
+        <li>确保当前浏览器窗口登录的是 B 账号。</li>
+        <li>点“打开当前链接”。</li>
+        <li>在打开的共享对话页底部发送上面的触发消息。</li>
+        <li>确认 B 账号侧边栏出现新对话后，回到本页点“标记完成并下一个”。</li>
+      </ol>
+      <table>
+        <thead>
+          <tr>
+            <th class="index">序号</th>
+            <th>标题</th>
+            <th>来源</th>
+            <th>链接</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      links: [],
+      current: 0,
+      done: new Set()
+    };
+
+    const storageKey = "chatgpt-shared-link-migration-progress-v1";
+    const fileInput = document.getElementById("fileInput");
+    const jsonInput = document.getElementById("jsonInput");
+    const loadButton = document.getElementById("loadButton");
+    const resetButton = document.getElementById("resetButton");
+    const summary = document.getElementById("summary");
+    const currentTitle = document.getElementById("currentTitle");
+    const currentUrl = document.getElementById("currentUrl");
+    const openButton = document.getElementById("openButton");
+    const copyPromptButton = document.getElementById("copyPromptButton");
+    const doneButton = document.getElementById("doneButton");
+    const skipButton = document.getElementById("skipButton");
+    const promptText = document.getElementById("promptText");
+    const rows = document.getElementById("rows");
+
+    function saveProgress() {
+      localStorage.setItem(storageKey, JSON.stringify({
+        current: state.current,
+        done: Array.from(state.done),
+        ids: state.links.map((item) => item.id || item.share_url)
+      }));
+    }
+
+    function restoreProgress() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(storageKey) || "{}");
+        const currentIds = state.links.map((item) => item.id || item.share_url);
+        const sameList = JSON.stringify(saved.ids || []) === JSON.stringify(currentIds);
+        if (sameList) {
+          state.current = Number(saved.current || 0);
+          state.done = new Set(saved.done || []);
+        }
+      } catch {
+        state.current = 0;
+        state.done = new Set();
+      }
+    }
+
+    function normalizeShareUrl(value) {
+      const url = new URL(String(value || "").trim());
+      const allowedHosts = new Set(["chatgpt.com", "chat.openai.com"]);
+      if (url.protocol !== "https:" || !allowedHosts.has(url.hostname) || !url.pathname.startsWith("/share/")) {
+        throw new Error("只允许 https://chatgpt.com/share/ 或 https://chat.openai.com/share/ 链接。");
+      }
+      return url.href;
+    }
+
+    function normalizeLinks(parsed) {
+      const source = Array.isArray(parsed)
+        ? parsed
+        : parsed.results || parsed.links || parsed.data || [];
+
+      if (!Array.isArray(source)) {
+        throw new Error("JSON 里没有找到 results/links/data 数组。");
+      }
+
+      const links = [];
+      const invalidIndexes = [];
+
+      source.forEach((item, index) => {
+        if (!item || !item.share_url || item.status === "error") return;
+
+        try {
+          links.push({
+            id: item.id || item.share_id || String(index + 1),
+            title: item.title || "Untitled conversation",
+            source: item.source || "",
+            share_url: normalizeShareUrl(item.share_url)
+          });
+        } catch {
+          invalidIndexes.push(index + 1);
+        }
+      });
+
+      if (invalidIndexes.length) {
+        throw new Error(`JSON 包含非 ChatGPT 共享链接，序号：${invalidIndexes.join(", ")}。`);
+      }
+
+      return links;
+    }
+
+    function findNext(start) {
+      for (let index = start; index < state.links.length; index += 1) {
+        const key = state.links[index].id || state.links[index].share_url;
+        if (!state.done.has(key)) return index;
+      }
+      return state.links.length;
+    }
+
+    function render() {
+      state.current = Math.min(findNext(state.current), state.links.length);
+      const item = state.links[state.current];
+      const doneCount = state.done.size;
+      summary.textContent = state.links.length
+        ? `${doneCount} / ${state.links.length} 已完成`
+        : "尚未加载";
+
+      if (item) {
+        currentTitle.textContent = `${state.current + 1}. ${item.title}`;
+        currentUrl.textContent = item.share_url;
+      } else {
+        currentTitle.textContent = state.links.length ? "全部处理完成" : "当前没有待处理链接";
+        currentUrl.textContent = "";
+      }
+
+      openButton.disabled = !item;
+      copyPromptButton.disabled = !item;
+      doneButton.disabled = !item;
+      skipButton.disabled = !item;
+
+      rows.innerHTML = "";
+      state.links.forEach((link, index) => {
+        const key = link.id || link.share_url;
+        const tr = document.createElement("tr");
+        if (state.done.has(key)) tr.className = "done";
+        tr.innerHTML = `
+          <td class="index">${index + 1}</td>
+          <td>${escapeHtml(link.title)}</td>
+          <td>${escapeHtml(link.source)}</td>
+          <td class="url"><a href="${escapeAttribute(link.share_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.share_url)}</a></td>
+        `;
+        rows.appendChild(tr);
+      });
+
+      saveProgress();
+    }
+
+    function escapeHtml(text) {
+      return String(text).replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      })[char]);
+    }
+
+    function escapeAttribute(text) {
+      return escapeHtml(text).replace(/`/g, "&#096;");
+    }
+
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      jsonInput.value = await file.text();
+    });
+
+    loadButton.addEventListener("click", () => {
+      try {
+        const parsed = JSON.parse(jsonInput.value);
+        state.links = normalizeLinks(parsed);
+        state.current = 0;
+        state.done = new Set();
+        restoreProgress();
+        render();
+      } catch (error) {
+        alert(`加载失败：${error.message || error}`);
+      }
+    });
+
+    resetButton.addEventListener("click", () => {
+      state.current = 0;
+      state.done = new Set();
+      localStorage.removeItem(storageKey);
+      render();
+    });
+
+    openButton.addEventListener("click", () => {
+      const item = state.links[state.current];
+      if (item) window.open(item.share_url, "_blank", "noopener,noreferrer");
+    });
+
+    copyPromptButton.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(promptText.value);
+    });
+
+    doneButton.addEventListener("click", () => {
+      const item = state.links[state.current];
+      if (!item) return;
+      state.done.add(item.id || item.share_url);
+      state.current += 1;
+      render();
+    });
+
+    skipButton.addEventListener("click", () => {
+      state.current += 1;
+      render();
+    });
+  </script>
+</body>
+</html>

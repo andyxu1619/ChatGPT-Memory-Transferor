@@ -1,0 +1,45 @@
+# Local browser profiles and login state
+browser-profile-account-a/
+browser-profile-account-b/
+
+# Runtime outputs, downloaded attachments, reports, and debug captures
+outputs/
+downloads/
+tmp/
+temp/
+*.log
+*.out.log
+*.err.log
+*.tmp
+*.bak
+
+# Local launchers that may contain machine-specific paths
+archived-launchers/
+*.cmd
+
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+*.local
+*.local.*
+
+# Python / test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Node artifacts
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

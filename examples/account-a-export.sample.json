@@ -1,0 +1,46 @@
+{
+  "schema": "chatgpt-shared-link-migration-v2",
+  "generated_at": "2026-01-01T00:00:00.000Z",
+  "account_hint": "sample data only",
+  "config": {
+    "dryRun": false,
+    "maxConversations": 1
+  },
+  "summary": {
+    "listed": 1,
+    "processed": 1,
+    "ok": 1,
+    "errors": 0,
+    "projects_discovered": 1,
+    "project_files": 0
+  },
+  "projects": [
+    {
+      "id": "g-p-example",
+      "name": "Example Project",
+      "description": "Sample project for documentation.",
+      "files": [],
+      "file_count": 0,
+      "mapped_conversation_count": 1
+    }
+  ],
+  "results": [
+    {
+      "status": "ok",
+      "id": "00000000-0000-0000-0000-000000000001",
+      "title": "Example conversation",
+      "project_name": "Example Project",
+      "project_id": "g-p-example",
+      "project_source": "sample",
+      "source": "visible",
+      "create_time": null,
+      "update_time": null,
+      "current_node_id": "example-node",
+      "share_id": "example-share-id",
+      "share_url": "https://chatgpt.com/share/example-share-id",
+      "already_exists": false,
+      "patch_public_ok": true,
+      "patch_error": ""
+    }
+  ]
+}
