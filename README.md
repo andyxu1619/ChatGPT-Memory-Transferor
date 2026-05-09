@@ -25,6 +25,7 @@ Languages:
 - 在 B 账号中逐条打开共享链接并发送一条迁移触发消息，让 B 账号生成对话副本。
 - 检查本机历史报告和 B 账号当前聊天列表，降低重复导入概率。
 - 在 B 账号中匹配或创建项目，把已导入聊天移回对应项目，并可重新上传项目附件。
+- 提供可双击的一键完整迁移命令，把 A 导出、B 导入、项目还原三段串起来。
 - 在自动导入不可用时，提供本地 HTML 手动导航工具。
 
 ### 能迁移什么
@@ -68,6 +69,13 @@ Languages:
 
 - `b-open-shared-links.html` 可在浏览器本地打开，加载 A 导出 JSON 后逐条打开共享链接，适合自动点击或自动发送不可用时使用。
 - `account-a-create-share-links.js` 是可在 A 账号页面 Console 中手动运行的简化导出脚本，主要用于调试或应急。
+
+一键完整迁移入口：
+
+- `run-account-a-to-b-full-sync.cmd` 是项目根目录里的双击入口，适合已经完成小批量验证、并确认 A/B 两个专用浏览器 Profile 都已登录后的完整迁移。
+- 它先调用 `run-full-shared-link-migration.ps1 -AssumeYes -NoPause`，完成 A 账号导出和 B 账号共享链接导入；然后调用 `run-account-b-restore-projects.ps1 -AssumeYes -NoPause`，继续还原项目、移动聊天并上传项目附件。
+- 它使用自身所在目录作为项目根目录，因此可以从资源管理器双击运行，也可以从命令行运行；报告、CSV 和日志仍写入同一个 `outputs/` 目录。
+- 任一阶段失败时命令会停下并保留窗口，方便查看错误；不会静默跳过失败继续执行后续阶段。
 
 ### 环境要求
 
@@ -115,6 +123,7 @@ powershell -ExecutionPolicy Bypass -File .\tests\validate-release.ps1
 ├── run-account-b-shared-link-import.ps1     # B 账号导入共享链接并生成对话副本
 ├── run-account-b-restore-projects.ps1       # B 账号项目创建、聊天移动和附件转移
 ├── run-full-shared-link-migration.ps1       # A 导出 + B 聊天导入串联入口
+├── run-account-a-to-b-full-sync.cmd         # 双击执行完整 A 到 B 迁移
 ├── docs/
 │   ├── manual-test-checklist.md             # 发布/改动后的手动验证清单
 │   └── publishing-checklist.md              # GitHub 发布检查清单
@@ -288,6 +297,31 @@ powershell -ExecutionPolicy Bypass -File .\run-full-shared-link-migration.ps1 -S
 
 如果 A 导出 JSON 没有可导入 `share_url`，但包含 `projects`，串联入口会跳过 B 聊天导入；之后可直接运行项目还原脚本来创建空项目或转移附件。
 
+#### 9. 双击一键完整迁移
+
+项目根目录提供 `run-account-a-to-b-full-sync.cmd`。它是面向日常使用的一键入口，不替代分步验证流程；建议先按前面的自检、dry run 和小批量导入确认流程正常，再用它跑完整迁移。
+
+双击后会连续执行：
+
+1. A 账号创建共享链接、导出项目元数据，并下载项目附件。
+2. B 账号打开共享链接并生成对话副本。
+3. B 账号匹配或创建项目，把已导入聊天移回项目，并上传已下载的项目附件。
+
+等价命令：
+
+```cmd
+run-account-a-to-b-full-sync.cmd
+```
+
+执行前请确认：
+
+- A 账号专用浏览器 Profile `browser-profile-account-a/` 已登录 A 账号。
+- B 账号专用浏览器 Profile `browser-profile-account-b/` 已登录 B 账号。
+- 当前 Windows 网络可以打开 `https://chatgpt.com`。
+- 你接受真实执行，不再需要每个写入阶段手动输入 `YES`，因为该入口会传入 `-AssumeYes -NoPause`。
+
+这个命令会沿用当前 Windows 代理设置，不会关闭 Upnet/VPN。报告、CSV 和附件处理结果仍输出到 `outputs/`。如果任一阶段失败，窗口会停在错误位置并提示查看 `outputs/`。
+
 ### 脚本参数参考
 
 #### `run-account-a-share-link-export.ps1`
@@ -354,6 +388,18 @@ powershell -ExecutionPolicy Bypass -File .\run-full-shared-link-migration.ps1 -S
 | `-AssumeYes` | 关闭 | 传给 B 导入阶段，跳过确认。 |
 | `-AllowDuplicates` | 关闭 | 传给 B 导入阶段，允许重复导入。 |
 | `-NoPause` | 关闭 | 脚本结束时不等待 Enter。 |
+
+#### `run-account-a-to-b-full-sync.cmd`
+
+| 项目 | 行为 |
+| --- | --- |
+| 启动方式 | 在项目根目录双击，或从命令行运行 `run-account-a-to-b-full-sync.cmd`。 |
+| 执行阶段 | 先运行 `run-full-shared-link-migration.ps1`，再运行 `run-account-b-restore-projects.ps1`。 |
+| 默认确认 | 自动传入 `-AssumeYes -NoPause`，适合已经验证过流程后的完整迁移。 |
+| 输出位置 | 所有报告、CSV、附件下载和错误线索仍在 `outputs/`。 |
+| 失败行为 | 任一阶段返回错误时立即停止，并保留窗口给用户查看错误。 |
+| 代理/VPN | 沿用当前 Windows 代理设置，不关闭、不停止、不修改 Upnet/VPN。 |
+| 自检 | 设置 `GPTSYNC_CMD_SELFTEST=1` 后运行，可只检查入口路径解析而不执行迁移。 |
 
 ### 报告和数据结构
 
@@ -642,6 +688,7 @@ Primary goals:
 - Open shared links in account B, send a migration prompt, and create account B conversation copies.
 - Detect likely duplicates from local reports and account B's visible conversation list.
 - Recreate or match projects in account B, move imported conversations back into projects, and optionally re-upload project attachments.
+- Provide a double-click full migration launcher that chains account A export, account B import, and project restore.
 - Provide a local HTML fallback when automatic import is not available.
 
 ### What Is Supported
@@ -685,6 +732,13 @@ Manual fallback:
 
 - `b-open-shared-links.html` opens an export JSON locally and lets you manually step through shared links.
 - `account-a-create-share-links.js` is a simplified script for manual use in the account A browser console.
+
+One-click full migration launcher:
+
+- `run-account-a-to-b-full-sync.cmd` is the double-click entrypoint in the repository root. It is intended for full migrations after you have already completed a small-batch validation and confirmed both dedicated browser profiles are signed in.
+- It first calls `run-full-shared-link-migration.ps1 -AssumeYes -NoPause` to run account A export and account B shared-link import. It then calls `run-account-b-restore-projects.ps1 -AssumeYes -NoPause` to restore projects, move imported chats, and upload project attachments.
+- It resolves the repository root from its own file location, so it can be launched from File Explorer or a terminal. Reports, CSV files, and logs still go to the same `outputs/` directory.
+- If any stage fails, the command stops and keeps the window open so you can inspect the error instead of silently continuing to the next stage.
 
 ### Requirements
 
@@ -732,6 +786,7 @@ powershell -ExecutionPolicy Bypass -File .\tests\validate-release.ps1
 ├── run-account-b-shared-link-import.ps1
 ├── run-account-b-restore-projects.ps1
 ├── run-full-shared-link-migration.ps1
+├── run-account-a-to-b-full-sync.cmd
 ├── docs/
 ├── examples/
 ├── tests/
@@ -810,6 +865,24 @@ Start with 1 to 3 non-sensitive conversations before running a larger migration.
 
    This combined entrypoint runs account A export and account B chat import only. Run `run-account-b-restore-projects.ps1` separately for project membership and attachment restore.
 
+9. Optional one-click full migration:
+
+   Double-click `run-account-a-to-b-full-sync.cmd` from the repository root after the self-tests, dry runs, and a small real import have succeeded.
+
+   It runs these stages in sequence:
+
+   1. Account A creates shared links, exports project metadata, and downloads project attachments.
+   2. Account B opens shared links and creates conversation copies.
+   3. Account B matches or creates projects, moves imported chats back into projects, and uploads downloaded project attachments.
+
+   Equivalent command:
+
+   ```cmd
+   run-account-a-to-b-full-sync.cmd
+   ```
+
+   Before using it, confirm `browser-profile-account-a/` is signed in to account A, `browser-profile-account-b/` is signed in to account B, and the current Windows network can open `https://chatgpt.com`. The launcher passes `-AssumeYes -NoPause`, uses the current Windows proxy settings, and does not close Upnet/VPN. Reports and failure details still go to `outputs/`.
+
 ### Command Reference
 
 #### `run-account-a-share-link-export.ps1`
@@ -864,6 +937,18 @@ Start with 1 to 3 non-sensitive conversations before running a larger migration.
 | `-AssumeYes` | Off | Passed to account B import. |
 | `-AllowDuplicates` | Off | Passed to account B import. |
 | `-NoPause` | Off | Do not wait for Enter at the end. |
+
+#### `run-account-a-to-b-full-sync.cmd`
+
+| Item | Behavior |
+| --- | --- |
+| Launch method | Double-click from the repository root, or run `run-account-a-to-b-full-sync.cmd` from a terminal. |
+| Stages | Runs `run-full-shared-link-migration.ps1`, then `run-account-b-restore-projects.ps1`. |
+| Confirmation | Passes `-AssumeYes -NoPause`, so it is meant for full migrations after validation. |
+| Output | Reports, CSV files, downloaded attachments, and failure clues remain under `outputs/`. |
+| Failure behavior | Stops immediately when a stage exits with an error and keeps the window open. |
+| Proxy/VPN | Reuses the current Windows proxy settings and does not stop, close, or modify Upnet/VPN. |
+| Self-test | Set `GPTSYNC_CMD_SELFTEST=1` before running it to check launcher path resolution without running a migration. |
 
 ### Reports
 
