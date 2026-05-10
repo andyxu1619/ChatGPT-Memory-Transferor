@@ -273,9 +273,12 @@ Assert-Contains -Content $html -Pattern "chatgpt.com" -Message "Manual HTML tool
 $bImportScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "run-account-b-shared-link-import.ps1")
 Assert-Contains -Content $bImportScript -Pattern "不会把共享链接页当作导入成功" -Message "B import must require a durable /c/{id} URL before reporting imported."
 Assert-Contains -Content $bImportScript -Pattern "match_imported_id" -Message "Duplicate detection must preserve imported conversation IDs."
+Assert-Contains -Content $bImportScript -Pattern "parseConversationTime" -Message "Recent import fallback must handle ChatGPT numeric timestamps."
+Assert-Contains -Content $bImportScript -Pattern "-PostItemDelayMs 不能小于 0" -Message "B import speedup delay must be validated before runtime work."
 
 $aExportScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "run-account-a-share-link-export.ps1")
 Assert-Contains -Content $aExportScript -Pattern "Invoke-BrowserDownloadFile" -Message "A export must have a browser-download fallback for project files."
+Assert-Contains -Content $aExportScript -Pattern "-DelayMs 不能小于 0" -Message "A export speedup delay must be validated before runtime work."
 
 $aExportInjector = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "account-a-create-share-links-cdp.js")
 Assert-Contains -Content $aExportInjector -Pattern "skipped_unavailable" -Message "A export must classify unreadable project-only conversations as skipped, not export errors."

@@ -8,6 +8,7 @@
 - [ ] `SECURITY.md` is present and lists `andyxu3076@gmail.com` as the security contact.
 - [ ] `LICENSE` is present.
 - [ ] `CHANGELOG.md` is present.
+- [ ] `CHANGELOG.md` describes the user-visible runtime, documentation, and validation changes in the pending release.
 - [ ] `CONTRIBUTING.md` is present.
 - [ ] Release validation passes:
 

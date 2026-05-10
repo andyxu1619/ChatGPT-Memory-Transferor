@@ -19,6 +19,13 @@ $outputDir = Join-Path $scriptDir "outputs"
 $exportScript = Join-Path $scriptDir "run-account-a-share-link-export.ps1"
 $importScript = Join-Path $scriptDir "run-account-b-shared-link-import.ps1"
 
+if ($ExportDelayMs -lt 0) {
+  throw "-ExportDelayMs 不能小于 0。"
+}
+if ($ImportPostItemDelayMs -lt 0) {
+  throw "-ImportPostItemDelayMs 不能小于 0。"
+}
+
 function Write-Step {
   param([string]$Message)
   Write-Host ""

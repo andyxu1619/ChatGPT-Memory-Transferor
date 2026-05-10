@@ -7,6 +7,17 @@
 - Added a concise Chinese README and linked it from the English README.
 - Added conservative speedup controls for account A export and account B import waits, plus import report timing metrics.
 
+### Fixed
+
+- Validated speedup delay parameters before opening browser windows and made recent imported-conversation fallback handle numeric ChatGPT timestamps.
+- Classified project-only conversations whose detail endpoint is unavailable as `skipped_unavailable` instead of export errors, while preserving project metadata in the report.
+- Hardened account B import so shared-link pages are not treated as successful imports unless a durable target conversation ID is found, including a recent-conversation fallback after sending the migration prompt.
+- Updated project attachment upload and binding for the current ChatGPT project-file API, including valid `location` values and strict failure reporting when upload or binding verification fails.
+
+### Validation
+
+- Verified syntax checks, `tests/validate-release.ps1`, and `git diff --check` for the speedup branch after syncing the runtime fixes.
+
 ## v0.1.0 - 2026-05-10
 
 ### Added

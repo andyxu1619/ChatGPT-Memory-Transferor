@@ -18,6 +18,10 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $profileDir = Join-Path $scriptDir "browser-profile-account-b"
 $outputDir = Join-Path $scriptDir "outputs"
 
+if ($PostItemDelayMs -lt 0) {
+  throw "-PostItemDelayMs 不能小于 0。"
+}
+
 function Write-Step {
   param([string]$Message)
   Write-Host ""
@@ -1096,6 +1100,18 @@ function Find-RecentConversationByTitle {
   const title = $titleJson;
   const startedAfter = Date.parse($startedAfterJson);
   const safeText = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
+  const parseConversationTime = (value) => {
+    if (value === null || value === undefined || value === "") return NaN;
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value < 1000000000000 ? value * 1000 : value;
+    }
+    const text = safeText(value);
+    if (/^\d+(?:\.\d+)?$/.test(text)) {
+      const numeric = Number(text);
+      return numeric < 1000000000000 ? numeric * 1000 : numeric;
+    }
+    return Date.parse(text);
+  };
   const sessionResponse = await fetch("/api/auth/session", { credentials: "include" });
   if (!sessionResponse.ok) {
     return JSON.stringify({ ok: false, status: sessionResponse.status, stage: "session" });
@@ -1124,10 +1140,10 @@ function Find-RecentConversationByTitle {
     }))
     .filter((item) => item.id && safeText(item.title).toLowerCase() === targetTitle)
     .filter((item) => {
-      const updated = Date.parse(item.update_time || item.create_time || "");
+      const updated = parseConversationTime(item.update_time || item.create_time);
       return Number.isFinite(updated) && Number.isFinite(startedAfter) && updated >= startedAfter;
     })
-    .sort((a, b) => Date.parse(b.update_time || b.create_time || "") - Date.parse(a.update_time || a.create_time || ""));
+    .sort((a, b) => parseConversationTime(b.update_time || b.create_time) - parseConversationTime(a.update_time || a.create_time));
 
   if (!candidates.length) {
     return JSON.stringify({ ok: true, found: false, scanned: items.length });
@@ -1188,10 +1204,6 @@ function Invoke-OrchestratedImport {
     [bool]$AllowDuplicateItems,
     [int]$AfterItemDelayMs
   )
-
-  if ($AfterItemDelayMs -lt 0) {
-    throw "-PostItemDelayMs 不能小于 0。"
-  }
 
   $startedAt = Get-Date
   $results = @()

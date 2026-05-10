@@ -24,6 +24,8 @@ Expected result:
 - Login state is detected after signing in.
 - A JSON and CSV report are written under `outputs/`.
 - The JSON contains at least one `results[].share_url` with `https://chatgpt.com/share/`.
+- Any `skipped_unavailable` rows are limited to unreadable project-only conversations and do not increase `summary.errors`.
+- `summary.project_files_download_errors` is `0` when attachment download is included.
 - Use one non-sensitive conversation for the first export test.
 
 ## B Account Import
@@ -39,6 +41,7 @@ Expected result:
 - Real run asks for `YES` before sending.
 - B account history shows the imported conversation after completion.
 - Report status is `imported`, `duplicate`, or a clear `error`.
+- Real import reports have `summary.errors` equal to `0`; duplicate skips should preserve usable imported IDs when they exist.
 - Use 1 to 3 non-sensitive shared links for the first import test.
 - Confirm dry-run mode does not perform real imports or overwrite target-account content.
 
@@ -57,6 +60,8 @@ Expected result:
 - Test an empty project or a source project with no imported conversations.
 - Test a conversation with project membership and confirm it is restored to the expected target project.
 - Test one non-sensitive small attachment sample before trying larger attachment batches.
+- Real restore reports have `summary.errors`, `summary.verify_failed`, `summary.project_create_errors`, and `summary.attachment_errors` equal to `0`.
+- Attachment restore should end as `uploaded` or `already_in_project`; inspect `attachment_results[].error` if `File uploaded but attach failed` appears.
 
 ## Manual HTML Fallback
 

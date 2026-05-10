@@ -16,6 +16,10 @@ $profileDir = Join-Path $scriptDir "browser-profile-account-a"
 $outputDir = Join-Path $scriptDir "outputs"
 $port = 9227
 
+if ($DelayMs -lt 0) {
+  throw "-DelayMs 不能小于 0。"
+}
+
 function Write-Step {
   param([string]$Message)
   Write-Host ""
@@ -670,10 +674,6 @@ function Invoke-BackgroundExport {
     [int]$MaxItems,
     [int]$ItemDelayMs
   )
-
-  if ($ItemDelayMs -lt 0) {
-    throw "-DelayMs 不能小于 0。"
-  }
 
   $options = @{
     dryRun = $DryRunMode
