@@ -71,6 +71,14 @@ powershell -ExecutionPolicy Bypass -File .\run-account-a-share-link-export.ps1 -
 powershell -ExecutionPolicy Bypass -File .\run-account-b-shared-link-import.ps1 -DryRun -Limit 1 -NoPause
 ```
 
+稳妥提速参数：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run-full-shared-link-migration.ps1 -ExportDelayMs 500 -ImportPostItemDelayMs 500
+```
+
+`-ExportDelayMs` 控制 A 账号创建共享链接后的基础等待；遇到限流或服务端错误时仍会退避重试。`-ImportPostItemDelayMs` 只控制 B 账号每条导入完成后的额外等待，不会跳过 `/c/{id}` 成功校验。B 账号导入默认会读取历史报告并跳过已成功导入的 shared link。
+
 真实导入或项目还原前，请先阅读 [项目详细说明](docs/project-details.md)。
 
 ## 文档

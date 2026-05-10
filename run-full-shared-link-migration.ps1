@@ -3,8 +3,10 @@ param(
   [switch]$DryRunImport,
   [int]$ExportLimit = 0,
   [int]$ExportSkip = 0,
+  [int]$ExportDelayMs = 500,
   [int]$ImportLimit = 0,
   [int]$ImportSkip = 0,
+  [int]$ImportPostItemDelayMs = 500,
   [switch]$AssumeYes,
   [switch]$AllowDuplicates,
   [switch]$NoPause
@@ -85,6 +87,7 @@ try {
     Write-Step "阶段 1/2：A 账号生成共享链接"
     $exportArgs = @{
       NoPause = $true
+      DelayMs = $ExportDelayMs
     }
     if ($ExportLimit -gt 0) {
       $exportArgs["Limit"] = $ExportLimit
@@ -109,6 +112,7 @@ try {
     $importArgs = @{
       InputJson = $latestJson
       NoPause = $true
+      PostItemDelayMs = $ImportPostItemDelayMs
     }
     if ($DryRunImport) {
       $importArgs["DryRun"] = $true

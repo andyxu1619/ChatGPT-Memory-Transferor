@@ -1309,6 +1309,12 @@ function Invoke-OrchestratedImport {
   $duplicateCount = @($results | Where-Object { $_.status -eq "duplicate" }).Count
   $duplicateSuspectedCount = @($results | Where-Object { $_.status -eq "duplicate_suspected" }).Count
   $errorCount = @($results | Where-Object { $_.status -eq "error" }).Count
+  $realImportAttemptCount = @($results | Where-Object { $_.status -eq "imported" -or $_.status -eq "error" }).Count
+  $importElapsedValues = @($results | Where-Object { $_.status -eq "imported" -and $null -ne $_.elapsed_seconds } | ForEach-Object { [double]$_.elapsed_seconds })
+  $importElapsedStats = $importElapsedValues | Measure-Object -Sum -Average -Maximum
+  $importElapsedTotal = if ($importElapsedValues.Count -gt 0) { [math]::Round($importElapsedStats.Sum, 1) } else { 0 }
+  $importElapsedAverage = if ($importElapsedValues.Count -gt 0) { [math]::Round($importElapsedStats.Average, 1) } else { 0 }
+  $importElapsedMax = if ($importElapsedValues.Count -gt 0) { [math]::Round($importElapsedStats.Maximum, 1) } else { 0 }
   $byProject = @{}
   foreach ($result in $results) {
     $name = [string]$result.project_name
@@ -1329,7 +1335,8 @@ function Invoke-OrchestratedImport {
     config = [pscustomobject]@{
       dryRun = $DryRunMode
       promptText = $PromptText
-      delayMs = 1500
+      delayMs = $AfterItemDelayMs
+      postItemDelayMs = $AfterItemDelayMs
       duplicateCheck = (-not $AllowDuplicateItems)
       priorDuplicateReports = if ($DuplicateIndex) { $DuplicateIndex.PriorReportCount } else { 0 }
       browserConversationsScanned = if ($DuplicateIndex) { $DuplicateIndex.BrowserConversationCount } else { 0 }
@@ -1341,8 +1348,14 @@ function Invoke-OrchestratedImport {
       dry_run = $dryRunCount
       duplicates = $duplicateCount
       duplicate_suspected = $duplicateSuspectedCount
+      skipped_existing_imports = $duplicateCount
+      skipped_browser_suspected = $duplicateSuspectedCount
+      real_import_attempts = $realImportAttemptCount
       errors = $errorCount
       elapsed_seconds = [math]::Round(($finishedAt - $startedAt).TotalSeconds)
+      import_elapsed_seconds_total = $importElapsedTotal
+      average_import_seconds = $importElapsedAverage
+      max_import_seconds = $importElapsedMax
       by_project = $byProject
     }
     results = $results
@@ -1496,6 +1509,7 @@ try {
   Write-Host "Dry run：$($report.summary.dry_run) 条"
   Write-Host "确定重复跳过：$($report.summary.duplicates) 条"
   Write-Host "疑似重复跳过：$($report.summary.duplicate_suspected) 条"
+  Write-Host "实际打开导入：$($report.summary.real_import_attempts) 条，平均耗时 $($report.summary.average_import_seconds) 秒"
   Write-Host "失败：$($report.summary.errors) 条"
   Write-Host "JSON：$($paths.JsonPath)"
   Write-Host "CSV ：$($paths.CsvPath)"

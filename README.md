@@ -71,6 +71,14 @@ Dry-run target-account import:
 powershell -ExecutionPolicy Bypass -File .\run-account-b-shared-link-import.ps1 -DryRun -Limit 1 -NoPause
 ```
 
+Safe speedup parameters:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run-full-shared-link-migration.ps1 -ExportDelayMs 500 -ImportPostItemDelayMs 500
+```
+
+`-ExportDelayMs` controls the base wait after account A creates each shared link; rate-limit and server-error retries still back off. `-ImportPostItemDelayMs` only controls the extra wait after each account B import item finishes, and does not bypass the `/c/{id}` success check. Account B import reads prior reports by default and skips shared links that were already imported.
+
 See [Project Details](docs/project-details.md) before running real imports or project restoration.
 
 ## Documentation

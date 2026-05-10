@@ -5,6 +5,7 @@
 ### Added
 
 - Added a concise Chinese README and linked it from the English README.
+- Added conservative speedup controls for account A export and account B import waits, plus import report timing metrics.
 
 ## v0.1.0 - 2026-05-10
 
