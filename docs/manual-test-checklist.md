@@ -40,7 +40,7 @@ Expected result:
 - Dry run writes a report without opening shared links or sending messages.
 - Real run asks for `YES` before sending.
 - B account history shows the imported conversation after completion.
-- Report status is `imported`, `duplicate`, or a clear `error`.
+- Report status is `imported`, `duplicate`, `would_update` in dry-run update cases, or a clear `error`.
 - Real import reports have `summary.errors` equal to `0`; duplicate skips should preserve usable imported IDs when they exist.
 - Use 1 to 3 non-sensitive shared links for the first import test.
 - Confirm dry-run mode does not perform real imports or overwrite target-account content.

@@ -9,6 +9,7 @@
 - [ ] `LICENSE` is present.
 - [ ] `CHANGELOG.md` is present.
 - [ ] `CHANGELOG.md` describes the user-visible runtime, documentation, and validation changes in the pending release.
+- [ ] `VERSION`, `README.md`, `README.zh-CN.md`, and `CHANGELOG.md` describe the same current version.
 - [ ] `CONTRIBUTING.md` is present.
 - [ ] Release validation passes:
 

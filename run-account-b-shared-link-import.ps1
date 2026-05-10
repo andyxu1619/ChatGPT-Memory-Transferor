@@ -145,6 +145,19 @@ function Safe-Text {
   return ([string]$Value).Trim()
 }
 
+function First-NonEmptyText {
+  param([object[]]$Values)
+
+  foreach ($value in @($Values)) {
+    $text = Safe-Text $value
+    if (-not [string]::IsNullOrWhiteSpace($text)) {
+      return $text
+    }
+  }
+
+  return ""
+}
+
 function Normalize-DuplicateText {
   param($Value)
   $text = (Safe-Text $Value).ToLowerInvariant()
@@ -217,12 +230,198 @@ function New-DuplicateIndex {
   }
 }
 
+function Get-SourceState {
+  param($Row)
+
+  if ($null -eq $Row) {
+    return $null
+  }
+
+  [pscustomobject]@{
+    source_id = First-NonEmptyText @($Row.source_id, $Row.id)
+    source_update_time = First-NonEmptyText @($Row.source_update_time, $Row.update_time)
+    source_current_node_id = First-NonEmptyText @($Row.source_current_node_id, $Row.current_node_id)
+    source_share_id = First-NonEmptyText @($Row.source_share_id, $Row.share_id)
+    source_share_url = First-NonEmptyText @($Row.source_share_url, $Row.share_url)
+  }
+}
+
+function Get-MatchedSourceState {
+  param($Row)
+
+  if ($null -eq $Row) {
+    return $null
+  }
+
+  [pscustomobject]@{
+    source_id = First-NonEmptyText @($Row.duplicate_match_source_id, $Row.match_source_id, $Row.id)
+    source_update_time = First-NonEmptyText @($Row.duplicate_match_source_update_time, $Row.match_source_update_time)
+    source_current_node_id = First-NonEmptyText @($Row.duplicate_match_source_current_node_id, $Row.match_source_current_node_id)
+    source_share_id = First-NonEmptyText @($Row.duplicate_match_source_share_id, $Row.match_source_share_id)
+    source_share_url = First-NonEmptyText @($Row.duplicate_match_source_share_url, $Row.match_source_share_url, $Row.share_url)
+  }
+}
+
+function Test-SourceStateHasVersion {
+  param($State)
+
+  if ($null -eq $State) {
+    return $false
+  }
+
+  return (
+    -not [string]::IsNullOrWhiteSpace((Safe-Text $State.source_current_node_id)) -or
+    -not [string]::IsNullOrWhiteSpace((Safe-Text $State.source_update_time))
+  )
+}
+
+function New-SourceStateIndexFromPath {
+  param([string]$Path)
+
+  $index = [pscustomobject]@{
+    BySourceId = @{}
+    ByShareUrl = @{}
+    ByTitleProject = @{}
+  }
+
+  if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    return $index
+  }
+
+  try {
+    $payload = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+    $rows = @()
+    if ($payload -is [array]) {
+      $rows = @($payload)
+    } elseif ($payload.results) {
+      $rows = @($payload.results)
+    } elseif ($payload.links) {
+      $rows = @($payload.links)
+    } elseif ($payload.data) {
+      $rows = @($payload.data)
+    }
+
+    foreach ($row in $rows) {
+      $state = Get-SourceState -Row $row
+      if (-not (Test-SourceStateHasVersion -State $state)) {
+        continue
+      }
+
+      $sourceId = Safe-Text $state.source_id
+      if (-not [string]::IsNullOrWhiteSpace($sourceId) -and -not $index.BySourceId.ContainsKey($sourceId)) {
+        $index.BySourceId[$sourceId] = $state
+      }
+
+      $shareUrl = Safe-Text $state.source_share_url
+      if (-not [string]::IsNullOrWhiteSpace($shareUrl) -and -not $index.ByShareUrl.ContainsKey($shareUrl)) {
+        $index.ByShareUrl[$shareUrl] = $state
+      }
+
+      $titleKey = Get-DuplicateTitleKey -Title $row.title -ProjectName $row.project_name
+      if (-not [string]::IsNullOrWhiteSpace($titleKey) -and -not $index.ByTitleProject.ContainsKey($titleKey)) {
+        $index.ByTitleProject[$titleKey] = $state
+      }
+    }
+  } catch {
+    return $index
+  }
+
+  return $index
+}
+
+function Resolve-ReportReferencePath {
+  param(
+    [string]$Path,
+    [string]$BaseDirectory
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    return ""
+  }
+
+  if (Test-Path -LiteralPath $Path -PathType Leaf) {
+    return (Resolve-Path -LiteralPath $Path).Path
+  }
+
+  if (-not [System.IO.Path]::IsPathRooted($Path) -and -not [string]::IsNullOrWhiteSpace($BaseDirectory)) {
+    $joined = Join-Path $BaseDirectory $Path
+    if (Test-Path -LiteralPath $joined -PathType Leaf) {
+      return (Resolve-Path -LiteralPath $joined).Path
+    }
+  }
+
+  return ""
+}
+
+function Get-SourceStateFromIndex {
+  param(
+    $Row,
+    $SourceStateIndex
+  )
+
+  if ($null -eq $Row -or $null -eq $SourceStateIndex) {
+    return $null
+  }
+
+  $sourceId = First-NonEmptyText @($Row.id, $Row.source_id)
+  if (-not [string]::IsNullOrWhiteSpace($sourceId) -and $SourceStateIndex.BySourceId.ContainsKey($sourceId)) {
+    return $SourceStateIndex.BySourceId[$sourceId]
+  }
+
+  $shareUrl = First-NonEmptyText @($Row.share_url, $Row.source_share_url)
+  if (-not [string]::IsNullOrWhiteSpace($shareUrl) -and $SourceStateIndex.ByShareUrl.ContainsKey($shareUrl)) {
+    return $SourceStateIndex.ByShareUrl[$shareUrl]
+  }
+
+  $titleKey = Get-DuplicateTitleKey -Title $Row.title -ProjectName $Row.project_name
+  if (-not [string]::IsNullOrWhiteSpace($titleKey) -and $SourceStateIndex.ByTitleProject.ContainsKey($titleKey)) {
+    return $SourceStateIndex.ByTitleProject[$titleKey]
+  }
+
+  return $null
+}
+
+function Test-DuplicateRecordHasVersion {
+  param($Record)
+
+  if ($null -eq $Record) {
+    return $false
+  }
+
+  return (
+    -not [string]::IsNullOrWhiteSpace((Safe-Text $Record.match_source_current_node_id)) -or
+    -not [string]::IsNullOrWhiteSpace((Safe-Text $Record.match_source_update_time))
+  )
+}
+
+function Set-DuplicateIndexRecord {
+  param(
+    [hashtable]$Table,
+    [string]$Key,
+    $Record
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Key)) {
+    return
+  }
+
+  if (-not $Table.ContainsKey($Key)) {
+    $Table[$Key] = $Record
+    return
+  }
+
+  if (-not (Test-DuplicateRecordHasVersion -Record $Table[$Key]) -and (Test-DuplicateRecordHasVersion -Record $Record)) {
+    $Table[$Key] = $Record
+  }
+}
+
 function New-DuplicateRecord {
   param(
     [string]$Status,
     [string]$Reason,
     [string]$MatchSource,
-    $Row
+    $Row,
+    $SourceState
   )
 
   $importedUrl = Safe-Text $Row.imported_url
@@ -231,11 +430,21 @@ function New-DuplicateRecord {
     $importedId = Get-ConversationIdFromUrl -Url $importedUrl
   }
 
+  $state = $SourceState
+  if ($null -eq $state) {
+    $state = Get-SourceState -Row $Row
+  }
+
   [pscustomobject]@{
     status = $Status
     reason = $Reason
     match_source = $MatchSource
     match_status = Safe-Text $Row.status
+    match_source_id = First-NonEmptyText @($state.source_id, $Row.id, $Row.source_id)
+    match_source_update_time = Safe-Text $state.source_update_time
+    match_source_current_node_id = Safe-Text $state.source_current_node_id
+    match_source_share_id = Safe-Text $state.source_share_id
+    match_source_share_url = First-NonEmptyText @($state.source_share_url, $Row.share_url, $Row.source_share_url)
     match_id = Safe-Text $Row.id
     match_title = Safe-Text $Row.title
     match_project_name = Safe-Text $Row.project_name
@@ -250,11 +459,12 @@ function Add-DuplicateRecord {
     $Index,
     $Row,
     [string]$MatchSource,
+    $SourceState,
     [switch]$BrowserMatch
   )
 
   $status = Safe-Text $Row.status
-  if ($status -match "^(error|missing|dry-run)$") {
+  if ($status -match "^(error|missing|dry-run|would_update)$") {
     return
   }
   if ((Safe-Text $Row.error)) {
@@ -268,26 +478,42 @@ function Add-DuplicateRecord {
     "本机历史成功导入报告里已有相同 A 源记录。"
   }
 
-  $record = New-DuplicateRecord -Status $recordStatus -Reason $recordReason -MatchSource $MatchSource -Row $Row
+  $recordSourceState = $null
+  if (-not $BrowserMatch) {
+    if ($status -match "^(duplicate|duplicate_suspected)$") {
+      $recordSourceState = Get-MatchedSourceState -Row $Row
+    } else {
+      $recordSourceState = $SourceState
+      if ($null -eq $recordSourceState) {
+        $recordSourceState = Get-SourceState -Row $Row
+      }
+    }
+  }
+
+  $record = New-DuplicateRecord -Status $recordStatus -Reason $recordReason -MatchSource $MatchSource -Row $Row -SourceState $recordSourceState
 
   if (-not $BrowserMatch -and [string]::IsNullOrWhiteSpace($record.match_imported_id)) {
     return
   }
 
   $sourceId = Safe-Text $Row.id
-  if (-not $BrowserMatch -and -not [string]::IsNullOrWhiteSpace($sourceId) -and -not $Index.BySourceId.ContainsKey($sourceId)) {
-    $Index.BySourceId[$sourceId] = $record
+  if (-not $BrowserMatch -and [string]::IsNullOrWhiteSpace($sourceId)) {
+    $sourceId = Safe-Text $record.match_source_id
+  }
+  if (-not $BrowserMatch) {
+    Set-DuplicateIndexRecord -Table $Index.BySourceId -Key $sourceId -Record $record
   }
 
   $shareUrl = Safe-Text $Row.share_url
-  if (-not $BrowserMatch -and -not [string]::IsNullOrWhiteSpace($shareUrl) -and -not $Index.ByShareUrl.ContainsKey($shareUrl)) {
-    $Index.ByShareUrl[$shareUrl] = $record
+  if (-not $BrowserMatch -and [string]::IsNullOrWhiteSpace($shareUrl)) {
+    $shareUrl = Safe-Text $record.match_source_share_url
+  }
+  if (-not $BrowserMatch) {
+    Set-DuplicateIndexRecord -Table $Index.ByShareUrl -Key $shareUrl -Record $record
   }
 
   $titleKey = Get-DuplicateTitleKey -Title $Row.title -ProjectName $Row.project_name
-  if (-not [string]::IsNullOrWhiteSpace($titleKey) -and -not $Index.ByTitleProject.ContainsKey($titleKey)) {
-    $Index.ByTitleProject[$titleKey] = $record
-  }
+  Set-DuplicateIndexRecord -Table $Index.ByTitleProject -Key $titleKey -Record $record
 }
 
 function Get-LocalDuplicateIndex {
@@ -308,6 +534,12 @@ function Get-LocalDuplicateIndex {
     foreach ($file in $files) {
       try {
         $payload = Get-Content -Raw -LiteralPath $file.FullName | ConvertFrom-Json
+        $sourceStateIndex = $null
+        $sourceJsonPath = Resolve-ReportReferencePath -Path (Safe-Text $payload.source_json) -BaseDirectory $OutputDirectory
+        if (-not [string]::IsNullOrWhiteSpace($sourceJsonPath)) {
+          $sourceStateIndex = New-SourceStateIndexFromPath -Path $sourceJsonPath
+        }
+
         $rows = @()
         if ($payload -is [array]) {
           $rows = @($payload)
@@ -318,7 +550,8 @@ function Get-LocalDuplicateIndex {
         }
 
         foreach ($row in $rows) {
-          Add-DuplicateRecord -Index $index -Row $row -MatchSource $file.Name
+          $sourceState = Get-SourceStateFromIndex -Row $row -SourceStateIndex $sourceStateIndex
+          Add-DuplicateRecord -Index $index -Row $row -MatchSource $file.Name -SourceState $sourceState
         }
         $index.PriorReportCount += 1
       } catch {
@@ -710,6 +943,9 @@ function Get-ImportItems {
       project_source = $_.project_source
       share_id = $_.share_id
       share_url = $_.share_url
+      source_update_time = $_.update_time
+      source_current_node_id = $_.current_node_id
+      source_share_id = $_.share_id
     }
   })
 
@@ -758,6 +994,11 @@ function Export-Report {
       project_source = $_.project_source
       title = $_.title
       share_url = $_.share_url
+      source_update_time = $_.source_update_time
+      source_current_node_id = $_.source_current_node_id
+      sync_mode = $_.sync_mode
+      previous_imported_id = $_.previous_imported_id
+      previous_imported_url = $_.previous_imported_url
       imported_id = $_.imported_id
       imported_url = $_.imported_url
       source = $_.source
@@ -766,6 +1007,8 @@ function Export-Report {
       duplicate_reason = $_.duplicate_reason
       duplicate_match_source = $_.duplicate_match_source
       duplicate_match_status = $_.duplicate_match_status
+      duplicate_match_source_update_time = $_.duplicate_match_source_update_time
+      duplicate_match_source_current_node_id = $_.duplicate_match_source_current_node_id
       duplicate_match_title = $_.duplicate_match_title
       duplicate_match_project_name = $_.duplicate_match_project_name
       error = $_.error
@@ -1177,6 +1420,86 @@ function Find-DuplicateImportItem {
   return $null
 }
 
+function ConvertTo-ComparableSourceTime {
+  param($Value)
+
+  $text = Safe-Text $Value
+  if ([string]::IsNullOrWhiteSpace($text)) {
+    return $null
+  }
+
+  try {
+    return [double]::Parse($text, [Globalization.CultureInfo]::InvariantCulture)
+  } catch {
+    try {
+      return ([datetime]::Parse($text, [Globalization.CultureInfo]::InvariantCulture)).ToUniversalTime().Subtract([datetime]"1970-01-01T00:00:00Z").TotalSeconds
+    } catch {
+      return $null
+    }
+  }
+}
+
+function Compare-SourceVersion {
+  param(
+    $Item,
+    $Duplicate
+  )
+
+  if ($null -eq $Duplicate) {
+    return [pscustomobject]@{
+      should_update = $false
+      basis = "none"
+      reason = ""
+    }
+  }
+
+  $currentNodeId = Safe-Text $Item.source_current_node_id
+  if ([string]::IsNullOrWhiteSpace($currentNodeId)) {
+    $currentNodeId = Safe-Text $Item.current_node_id
+  }
+  $previousNodeId = Safe-Text $Duplicate.match_source_current_node_id
+
+  if (-not [string]::IsNullOrWhiteSpace($currentNodeId) -and -not [string]::IsNullOrWhiteSpace($previousNodeId)) {
+    if ($currentNodeId -ne $previousNodeId) {
+      return [pscustomobject]@{
+        should_update = $true
+        basis = "current_node_id"
+        reason = "A 账号源会话 current_node_id 已变化，重新导入最新共享快照。"
+      }
+    }
+
+    return [pscustomobject]@{
+      should_update = $false
+      basis = "current_node_id"
+      reason = "A 账号源会话 current_node_id 未变化。"
+    }
+  }
+
+  $currentTime = ConvertTo-ComparableSourceTime -Value (First-NonEmptyText @($Item.source_update_time, $Item.update_time))
+  $previousTime = ConvertTo-ComparableSourceTime -Value $Duplicate.match_source_update_time
+  if ($null -ne $currentTime -and $null -ne $previousTime) {
+    if ($currentTime -gt ($previousTime + 1)) {
+      return [pscustomobject]@{
+        should_update = $true
+        basis = "update_time"
+        reason = "A 账号源会话 update_time 晚于上次已导入版本，重新导入最新共享快照。"
+      }
+    }
+
+    return [pscustomobject]@{
+      should_update = $false
+      basis = "update_time"
+      reason = "A 账号源会话 update_time 未晚于上次已导入版本。"
+    }
+  }
+
+  return [pscustomobject]@{
+    should_update = $false
+    basis = "unknown"
+    reason = "缺少可比较的历史源版本，保守按重复记录跳过。"
+  }
+}
+
 function Invoke-OrchestratedImport {
   param(
     [System.Net.WebSockets.ClientWebSocket]$WebSocket,
@@ -1202,13 +1525,28 @@ function Invoke-OrchestratedImport {
     $timer = [Diagnostics.Stopwatch]::StartNew()
 
     $duplicate = $null
+    $versionComparison = $null
+    $syncMode = "create"
+    $previousImportedId = ""
+    $previousImportedUrl = ""
     if (-not $AllowDuplicateItems) {
       $duplicate = Find-DuplicateImportItem -Item $item -Index $DuplicateIndex
     }
 
     if ($duplicate) {
+      $versionComparison = Compare-SourceVersion -Item $item -Duplicate $duplicate
+      $previousImportedId = Safe-Text $duplicate.match_imported_id
+      $previousImportedUrl = Safe-Text $duplicate.match_imported_url
+      if ($versionComparison.should_update) {
+        $syncMode = "update"
+        Write-Host "[update] $title :: $($versionComparison.reason)" -ForegroundColor Cyan
+      } else {
       $timer.Stop()
-      Write-Host "[skip:$($duplicate.status)] $title :: $($duplicate.reason)" -ForegroundColor Yellow
+        $skipReason = $duplicate.reason
+        if (-not [string]::IsNullOrWhiteSpace((Safe-Text $versionComparison.reason))) {
+          $skipReason = "$skipReason $($versionComparison.reason)"
+        }
+        Write-Host "[skip:$($duplicate.status)] $title :: $skipReason" -ForegroundColor Yellow
       $results += [pscustomobject]@{
         status = $duplicate.status
         id = $item.id
@@ -1218,22 +1556,30 @@ function Invoke-OrchestratedImport {
         project_source = $item.project_source
         source = $item.source
         share_url = $item.share_url
+          source_update_time = $item.source_update_time
+          source_current_node_id = $item.source_current_node_id
+          sync_mode = "skip"
+          previous_imported_id = $previousImportedId
+          previous_imported_url = $previousImportedUrl
         imported_id = $duplicate.match_imported_id
         imported_url = $duplicate.match_imported_url
         elapsed_seconds = [math]::Round($timer.Elapsed.TotalSeconds)
-        duplicate_reason = $duplicate.reason
+          duplicate_reason = $skipReason
         duplicate_match_source = $duplicate.match_source
         duplicate_match_status = $duplicate.match_status
+          duplicate_match_source_update_time = $duplicate.match_source_update_time
+          duplicate_match_source_current_node_id = $duplicate.match_source_current_node_id
         duplicate_match_title = $duplicate.match_title
         duplicate_match_project_name = $duplicate.match_project_name
         error = ""
       }
       continue
+      }
     }
 
     if ($DryRunMode) {
       $results += [pscustomobject]@{
-        status = "dry-run"
+        status = if ($syncMode -eq "update") { "would_update" } else { "dry-run" }
         id = $item.id
         title = $title
         project_name = $item.project_name
@@ -1241,14 +1587,21 @@ function Invoke-OrchestratedImport {
         project_source = $item.project_source
         source = $item.source
         share_url = $item.share_url
+        source_update_time = $item.source_update_time
+        source_current_node_id = $item.source_current_node_id
+        sync_mode = $syncMode
+        previous_imported_id = $previousImportedId
+        previous_imported_url = $previousImportedUrl
         imported_id = ""
         imported_url = ""
         elapsed_seconds = 0
-        duplicate_reason = ""
-        duplicate_match_source = ""
-        duplicate_match_status = ""
-        duplicate_match_title = ""
-        duplicate_match_project_name = ""
+        duplicate_reason = if ($versionComparison) { $versionComparison.reason } else { "" }
+        duplicate_match_source = if ($duplicate) { $duplicate.match_source } else { "" }
+        duplicate_match_status = if ($duplicate) { $duplicate.match_status } else { "" }
+        duplicate_match_source_update_time = if ($duplicate) { $duplicate.match_source_update_time } else { "" }
+        duplicate_match_source_current_node_id = if ($duplicate) { $duplicate.match_source_current_node_id } else { "" }
+        duplicate_match_title = if ($duplicate) { $duplicate.match_title } else { "" }
+        duplicate_match_project_name = if ($duplicate) { $duplicate.match_project_name } else { "" }
         error = ""
       }
       continue
@@ -1338,14 +1691,21 @@ function Invoke-OrchestratedImport {
         project_source = $item.project_source
         source = $item.source
         share_url = $item.share_url
+        source_update_time = $item.source_update_time
+        source_current_node_id = $item.source_current_node_id
+        sync_mode = $syncMode
+        previous_imported_id = $previousImportedId
+        previous_imported_url = $previousImportedUrl
         imported_id = $importedId
         imported_url = $importedUrl
         elapsed_seconds = [math]::Round($timer.Elapsed.TotalSeconds)
-        duplicate_reason = ""
-        duplicate_match_source = ""
-        duplicate_match_status = ""
-        duplicate_match_title = ""
-        duplicate_match_project_name = ""
+        duplicate_reason = if ($versionComparison) { $versionComparison.reason } else { "" }
+        duplicate_match_source = if ($duplicate) { $duplicate.match_source } else { "" }
+        duplicate_match_status = if ($duplicate) { $duplicate.match_status } else { "" }
+        duplicate_match_source_update_time = if ($duplicate) { $duplicate.match_source_update_time } else { "" }
+        duplicate_match_source_current_node_id = if ($duplicate) { $duplicate.match_source_current_node_id } else { "" }
+        duplicate_match_title = if ($duplicate) { $duplicate.match_title } else { "" }
+        duplicate_match_project_name = if ($duplicate) { $duplicate.match_project_name } else { "" }
         error = ""
       }
     } catch {
@@ -1367,14 +1727,21 @@ function Invoke-OrchestratedImport {
         project_source = $item.project_source
         source = $item.source
         share_url = $item.share_url
+        source_update_time = $item.source_update_time
+        source_current_node_id = $item.source_current_node_id
+        sync_mode = $syncMode
+        previous_imported_id = $previousImportedId
+        previous_imported_url = $previousImportedUrl
         imported_id = Get-ConversationIdFromUrl -Url $currentHref
         imported_url = $currentHref
         elapsed_seconds = [math]::Round($timer.Elapsed.TotalSeconds)
-        duplicate_reason = ""
-        duplicate_match_source = ""
-        duplicate_match_status = ""
-        duplicate_match_title = ""
-        duplicate_match_project_name = ""
+        duplicate_reason = if ($versionComparison) { $versionComparison.reason } else { "" }
+        duplicate_match_source = if ($duplicate) { $duplicate.match_source } else { "" }
+        duplicate_match_status = if ($duplicate) { $duplicate.match_status } else { "" }
+        duplicate_match_source_update_time = if ($duplicate) { $duplicate.match_source_update_time } else { "" }
+        duplicate_match_source_current_node_id = if ($duplicate) { $duplicate.match_source_current_node_id } else { "" }
+        duplicate_match_title = if ($duplicate) { $duplicate.match_title } else { "" }
+        duplicate_match_project_name = if ($duplicate) { $duplicate.match_project_name } else { "" }
         error = $message
       }
     }
@@ -1385,6 +1752,7 @@ function Invoke-OrchestratedImport {
   $finishedAt = Get-Date
   $importedCount = @($results | Where-Object { $_.status -eq "imported" }).Count
   $dryRunCount = @($results | Where-Object { $_.status -eq "dry-run" }).Count
+  $wouldUpdateCount = @($results | Where-Object { $_.status -eq "would_update" }).Count
   $duplicateCount = @($results | Where-Object { $_.status -eq "duplicate" }).Count
   $duplicateSuspectedCount = @($results | Where-Object { $_.status -eq "duplicate_suspected" }).Count
   $errorCount = @($results | Where-Object { $_.status -eq "error" }).Count
@@ -1418,6 +1786,7 @@ function Invoke-OrchestratedImport {
       processed = @($results).Count
       imported = $importedCount
       dry_run = $dryRunCount
+      would_update = $wouldUpdateCount
       duplicates = $duplicateCount
       duplicate_suspected = $duplicateSuspectedCount
       errors = $errorCount
@@ -1540,10 +1909,19 @@ try {
     Write-Host "B 账号已扫描聊天：$($duplicateIndex.BrowserConversationCount) 条"
 
     $duplicatePreview = @($items | ForEach-Object {
-      Find-DuplicateImportItem -Item $_ -Index $duplicateIndex
+      $match = Find-DuplicateImportItem -Item $_ -Index $duplicateIndex
+      if ($match) {
+        [pscustomobject]@{
+          item = $_
+          duplicate = $match
+          version = Compare-SourceVersion -Item $_ -Duplicate $match
+        }
+      }
     } | Where-Object { $_ })
-    $confirmedPreview = @($duplicatePreview | Where-Object { $_.status -eq "duplicate" }).Count
-    $suspectedPreview = @($duplicatePreview | Where-Object { $_.status -eq "duplicate_suspected" }).Count
+    $updatePreview = @($duplicatePreview | Where-Object { $_.version.should_update }).Count
+    $confirmedPreview = @($duplicatePreview | Where-Object { -not $_.version.should_update -and $_.duplicate.status -eq "duplicate" }).Count
+    $suspectedPreview = @($duplicatePreview | Where-Object { -not $_.version.should_update -and $_.duplicate.status -eq "duplicate_suspected" }).Count
+    Write-Host "将重新导入源版本已变化记录：$updatePreview 条"
     Write-Host "将跳过确定重复：$confirmedPreview 条"
     Write-Host "将跳过疑似重复：$suspectedPreview 条"
   } else {
@@ -1573,6 +1951,7 @@ try {
   Write-Step "完成"
   Write-Host "导入成功：$($report.summary.imported) 条"
   Write-Host "Dry run：$($report.summary.dry_run) 条"
+  Write-Host "源版本变化待更新：$($report.summary.would_update) 条"
   Write-Host "确定重复跳过：$($report.summary.duplicates) 条"
   Write-Host "疑似重复跳过：$($report.summary.duplicate_suspected) 条"
   Write-Host "失败：$($report.summary.errors) 条"

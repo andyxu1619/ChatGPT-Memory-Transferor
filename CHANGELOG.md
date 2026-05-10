@@ -2,19 +2,31 @@
 
 ## Unreleased
 
+- No unreleased changes.
+
+## v0.1.1 - 2026-05-10
+
 ### Added
 
 - Added a concise Chinese README and linked it from the English README.
+- Added `VERSION` for explicit version tracking.
+- Added README sections for technology stack, installation, environment variables, validation, build boundary, local run commands, project structure, and publishing guidance.
 
 ### Fixed
 
 - Classified project-only conversations whose detail endpoint is unavailable as `skipped_unavailable` instead of export errors, while preserving project metadata in the report.
+- Improved duplicate detection so historical imports can be compared against source `current_node_id` or `update_time`; dry-run import reports updated source conversations as `would_update`.
 - Hardened account B import so shared-link pages are not treated as successful imports unless a durable target conversation ID is found, including a recent-conversation fallback after sending the migration prompt.
 - Updated project attachment upload and binding for the current ChatGPT project-file API, including valid `location` values and strict failure reporting when upload or binding verification fails.
 
+### Security
+
+- Reconfirmed that tracked files contain no real shared links, local user paths, browser profiles, outputs, logs, reports, or unauthorized email addresses.
+- Kept `andyxu3076@gmail.com` as the only public contact email in tracked project files.
+
 ### Validation
 
-- Verified the main workflow with live account A export, account B import, project restore, attachment restore, syntax checks, `tests/validate-release.ps1`, and `git diff --check`.
+- Verified release validation, JavaScript syntax checks, PowerShell syntax checks, account A self-test, account B dry-run import, project restore dry run, root `.cmd` self-test, and `git diff --check`.
 
 ## v0.1.0 - 2026-05-10
 

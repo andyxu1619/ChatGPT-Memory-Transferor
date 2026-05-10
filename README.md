@@ -6,6 +6,8 @@ ChatGPT Memory Transferor is an experimental Windows toolkit for copying ChatGPT
 
 This is not an official OpenAI or ChatGPT migration API. It uses the ChatGPT web app through your local browser login state.
 
+Current version: v0.1.1. See [CHANGELOG.md](CHANGELOG.md).
+
 ## What it does
 
 - Creates shared links from source-account conversations.
@@ -33,14 +35,22 @@ This project is experimental and depends on ChatGPT Web behavior, shared-link be
 - Dedicated browser profiles for source and target accounts.
 - Project metadata export and restore helpers.
 - Project attachment transfer helpers.
-- Duplicate-aware import reports.
+- Version-aware duplicate detection and import reports.
 - Local HTML helper for manual shared-link review.
 - Release validation script for public repository checks.
+
+## Technology stack
+
+- Windows PowerShell scripts for orchestration and local validation.
+- JavaScript injected through browser DevTools Protocol for ChatGPT Web automation.
+- Static HTML helper for manual shared-link review.
+- No npm, pip, Docker, database, or compiled build step is required.
 
 ## Current runtime notes
 
 - Project-only conversations that ChatGPT lists but does not return from the detail endpoint are reported as `skipped_unavailable`, not as export failures.
 - Account B imports are treated as successful only after the browser reaches a usable `/c/{id}` conversation URL.
+- Duplicate detection compares source `current_node_id` or `update_time` when history has enough metadata, so updated source conversations can be reported as `would_update` in dry-run mode instead of being silently skipped as unchanged duplicates.
 - Project attachment restore uses the current project-file binding payload and fails loudly if upload, binding, or verification still has errors.
 
 ## Requirements
@@ -51,13 +61,34 @@ This project is experimental and depends on ChatGPT Web behavior, shared-link be
 - Two ChatGPT accounts.
 - Git, optional unless you clone or contribute to the repository.
 
-## Quick start
+## Installation
 
 ```powershell
 git clone https://github.com/example-user/ChatGPT-Memory-Transferor.git
 cd ChatGPT-Memory-Transferor
+```
+
+No dependency install command is required. The repository runs directly from the checked-out PowerShell, JavaScript, and HTML files.
+
+## Environment variables
+
+No `.env` file or real secret is required. Do not create or commit `.env` files with account data, tokens, cookies, or local paths.
+
+Optional local-only variable:
+
+- `GPTSYNC_CMD_SELFTEST=1` runs the root `.cmd` launcher self-test without starting the migration flow.
+
+## Validation, tests, and build
+
+Run the release validation check:
+
+```powershell
 powershell -ExecutionPolicy Bypass -File .\tests\validate-release.ps1
 ```
+
+There is no separate build command because this is a script toolkit. Treat the release validation script, JavaScript syntax checks, and PowerShell syntax checks as the build gate.
+
+## Local run commands
 
 Run a source-account self-test:
 
@@ -78,6 +109,27 @@ powershell -ExecutionPolicy Bypass -File .\run-account-b-shared-link-import.ps1 
 ```
 
 See [Project Details](docs/project-details.md) before running real imports or project restoration.
+
+## Project structure
+
+```text
+.
+|-- account-a-create-share-links-cdp.js
+|-- b-open-shared-links.html
+|-- run-account-a-share-link-export.ps1
+|-- run-account-b-shared-link-import.ps1
+|-- run-account-b-restore-projects.ps1
+|-- run-full-shared-link-migration.ps1
+|-- tests/validate-release.ps1
+|-- docs/
+|-- examples/
+|-- VERSION
+`-- CHANGELOG.md
+```
+
+## Deployment and publishing
+
+This project is published as source code. Before publishing a change, run `tests/validate-release.ps1`, confirm `git status --ignored`, and verify that browser profiles, `outputs/`, logs, reports, real shared links, and `.env` files are not tracked.
 
 ## Documentation
 

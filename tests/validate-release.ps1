@@ -252,6 +252,7 @@ $trackedFiles = Invoke-GitLines -Arguments @("ls-files")
 $requiredContentFiles = @(
   "README.md",
   "README.zh-CN.md",
+  "VERSION",
   "CHANGELOG.md",
   "CONTRIBUTING.md",
   "SECURITY.md",
@@ -273,6 +274,8 @@ Assert-Contains -Content $html -Pattern "chatgpt.com" -Message "Manual HTML tool
 $bImportScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "run-account-b-shared-link-import.ps1")
 Assert-Contains -Content $bImportScript -Pattern "不会把共享链接页当作导入成功" -Message "B import must require a durable /c/{id} URL before reporting imported."
 Assert-Contains -Content $bImportScript -Pattern "match_imported_id" -Message "Duplicate detection must preserve imported conversation IDs."
+Assert-Contains -Content $bImportScript -Pattern "Compare-SourceVersion" -Message "Duplicate detection must compare source version metadata."
+Assert-Contains -Content $bImportScript -Pattern "would_update" -Message "Duplicate dry runs must report updated source conversations."
 
 $aExportScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "run-account-a-share-link-export.ps1")
 Assert-Contains -Content $aExportScript -Pattern "Invoke-BrowserDownloadFile" -Message "A export must have a browser-download fallback for project files."
@@ -313,6 +316,7 @@ if (-not (Test-Path -LiteralPath $gitignorePath)) {
 foreach ($requiredFile in @(
   "README.md",
   "README.zh-CN.md",
+  "VERSION",
   "LICENSE",
   "CHANGELOG.md",
   "CONTRIBUTING.md",
@@ -343,6 +347,26 @@ if (Test-Path -LiteralPath $readmePath) {
   )) {
     if ($readme -match [regex]::Escape($pattern)) {
       Add-Failure "README contains a placeholder repository address."
+    }
+  }
+}
+
+$versionPath = Join-Path $repoRoot "VERSION"
+if (Test-Path -LiteralPath $versionPath) {
+  $version = (Get-Content -Raw -LiteralPath $versionPath).Trim()
+  if ($version -notmatch "^\d+\.\d+\.\d+$") {
+    Add-Failure "VERSION must contain a semantic version such as 0.1.1."
+  } else {
+    foreach ($versionedFile in @("README.md", "README.zh-CN.md", "CHANGELOG.md")) {
+      $path = Join-Path $repoRoot $versionedFile
+      if ((Test-Path -LiteralPath $path) -and ((Get-Content -Raw -LiteralPath $path) -notmatch [regex]::Escape($version))) {
+        Add-Failure "$versionedFile must mention current version $version."
+      }
+    }
+
+    $changelogPath = Join-Path $repoRoot "CHANGELOG.md"
+    if ((Test-Path -LiteralPath $changelogPath) -and ((Get-Content -Raw -LiteralPath $changelogPath) -notmatch [regex]::Escape("## v$version - "))) {
+      Add-Failure "CHANGELOG.md must contain a release section for v$version."
     }
   }
 }

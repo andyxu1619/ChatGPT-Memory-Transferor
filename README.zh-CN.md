@@ -6,6 +6,8 @@ ChatGPT Memory Transferor 是一个实验性的 Windows 工具包，用于通过
 
 本项目不是 OpenAI 或 ChatGPT 官方迁移 API。它依赖本机浏览器登录态、ChatGPT Web 页面行为和共享链接机制。
 
+当前版本：v0.1.1。详见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 它能做什么
 
 - 在源账号中为可迁移对话创建共享链接。
@@ -33,14 +35,22 @@ This project is experimental and depends on ChatGPT Web behavior, shared-link be
 - 为源账号和目标账号使用独立浏览器 Profile。
 - 项目元数据导出和还原辅助。
 - 项目附件转移辅助。
-- 带重复检测的导入报告。
+- 带源版本判断的重复检测和导入报告。
 - 用于手动检查共享链接输入的本地 HTML 工具。
 - 用于公开发布前检查的 release validation 脚本。
+
+## 技术栈
+
+- Windows PowerShell 脚本负责编排和本地验证。
+- 通过浏览器 DevTools Protocol 注入 JavaScript，驱动 ChatGPT Web 自动化。
+- 静态 HTML 辅助页用于手动检查共享链接。
+- 不需要 npm、pip、Docker、数据库或编译型 build 步骤。
 
 ## 当前运行说明
 
 - ChatGPT 项目列表能看到、但详情接口暂时不可读的项目内对话，会记录为 `skipped_unavailable`，不会把整次 A 导出判定为失败。
 - B 账号导入只有在浏览器进入可用的 `/c/{id}` 对话地址后才算成功。
+- 重复检测会在历史记录有足够元数据时比较源对话的 `current_node_id` 或 `update_time`，源对话已更新时 dry run 会报告 `would_update`，而不是静默当作未变化重复项跳过。
 - 项目附件还原使用当前项目文件绑定接口要求的 payload；上传、绑定或复查仍有错误时会明确失败。
 
 ## 环境要求
@@ -51,13 +61,34 @@ This project is experimental and depends on ChatGPT Web behavior, shared-link be
 - 两个 ChatGPT 账号。
 - Git，可选；仅在 clone 或参与贡献时需要。
 
-## 快速开始
+## 安装
 
 ```powershell
 git clone https://github.com/example-user/ChatGPT-Memory-Transferor.git
 cd ChatGPT-Memory-Transferor
+```
+
+不需要执行依赖安装命令。仓库中的 PowerShell、JavaScript 和 HTML 文件可直接运行。
+
+## 环境变量
+
+不需要 `.env` 文件或真实密钥。不要创建或提交包含账号数据、token、cookie 或本机路径的 `.env` 文件。
+
+可选的本地变量：
+
+- `GPTSYNC_CMD_SELFTEST=1`：只运行根目录 `.cmd` 启动器自检，不启动迁移流程。
+
+## 验证、测试和构建
+
+运行 release validation：
+
+```powershell
 powershell -ExecutionPolicy Bypass -File .\tests\validate-release.ps1
 ```
+
+本项目是脚本工具包，没有单独 build 命令。请把 release validation、JavaScript 语法检查和 PowerShell 语法检查作为 build gate。
+
+## 本地运行命令
 
 运行源账号自检：
 
@@ -78,6 +109,27 @@ powershell -ExecutionPolicy Bypass -File .\run-account-b-shared-link-import.ps1 
 ```
 
 真实导入或项目还原前，请先阅读 [项目详细说明](docs/project-details.md)。
+
+## 项目目录结构
+
+```text
+.
+|-- account-a-create-share-links-cdp.js
+|-- b-open-shared-links.html
+|-- run-account-a-share-link-export.ps1
+|-- run-account-b-shared-link-import.ps1
+|-- run-account-b-restore-projects.ps1
+|-- run-full-shared-link-migration.ps1
+|-- tests/validate-release.ps1
+|-- docs/
+|-- examples/
+|-- VERSION
+`-- CHANGELOG.md
+```
+
+## 部署和发布
+
+本项目以源码形式发布。发布前请运行 `tests\validate-release.ps1`，检查 `git status --ignored`，并确认浏览器 Profile、`outputs/`、logs、reports、真实共享链接和 `.env` 文件没有被 Git 跟踪。
 
 ## 文档
 

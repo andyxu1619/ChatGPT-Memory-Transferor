@@ -83,6 +83,7 @@ Languages:
 
 - A 导出会重试项目对话详情接口。若某些仅从项目列表发现的对话详情仍返回不可读取、服务端错误或限流，报告会把它们记为 `skipped_unavailable`，而不是把整次导出标为失败。
 - B 导入只有拿到 B 账号稳定对话 ID 后才会写入 `imported`。如果页面没有直接跳到 `/c/{id}`，脚本会再从 B 账号最近对话列表中按标题和时间窗口找回刚创建的对话 ID。
+- B 导入重复检测会尽量保留并比较 A 源对话的 `current_node_id` 或 `update_time`。如果历史报告显示已导入，但当前 A 源对话版本已经变化，dry run 会把该行标为 `would_update`，真实运行会重新导入最新共享快照。
 - B 项目附件上传后会按当前项目文件接口要求提交 `files[]` 对象，其中包含 `file_id` 和合法 `location` 值。真实项目还原只要存在聊天、项目创建、附件上传或绑定失败，就会以非零错误退出。
 
 ### 环境要求
@@ -502,6 +503,7 @@ outputs/chatgpt-account-b-dry-run_import-report_yyyy-MM-dd_HH-mm-ss.csv
 | --- | --- |
 | `imported` | 已发送触发消息，并确认进入 B 账号 `/c/{id}` 对话页。 |
 | `dry-run` | Dry run 记录，未执行真实导入。 |
+| `would_update` | Dry run 发现历史导入存在，但 A 源对话版本已经变化；真实运行会重新导入。 |
 | `duplicate` | 已确认重复，已跳过。 |
 | `duplicate_suspected` | 疑似重复，默认跳过以降低重复导入风险。 |
 | `error` | 导入失败，查看 `error` 和 `imported_url`。 |
@@ -644,7 +646,7 @@ A 和 B 账号必须隔离登录态，避免同一个浏览器窗口频繁切换
 
 #### B 导入报告中出现重复怎么办？
 
-默认行为会用历史导入报告和 B 账号聊天列表做重复检测，并跳过确定重复或疑似重复项。如果你明确要重复导入，可使用 `-AllowDuplicates`。
+默认行为会用历史导入报告和 B 账号聊天列表做重复检测，并跳过确定重复或疑似重复项。如果历史报告带有 A 源对话版本信息，脚本会比较 `current_node_id` 或 `update_time`；源版本变化时 dry run 会报告 `would_update`。如果你明确要重复导入，可使用 `-AllowDuplicates`。
 
 #### 附件出现 `missing_local_file` 怎么办？
 
@@ -767,6 +769,7 @@ Current runtime protections:
 
 - Account A export retries project-conversation detail requests. If a project-only conversation is still unreadable, rate-limited, or returning a server error, the report marks it as `skipped_unavailable` instead of treating the whole export as failed.
 - Account B import records `imported` only after it has a durable account B conversation ID. If the page does not directly land on `/c/{id}`, the script searches the recent account B conversation list by title and send-time window.
+- Account B duplicate detection preserves source `current_node_id` or `update_time` when available. If a historical import exists but the account A source conversation version changed, dry-run reports `would_update` and a real run imports the latest shared snapshot again.
 - Account B project-file restore sends `files[]` objects with `file_id` and a valid `location` value required by the current project-file API. Real restore runs exit with an error when chat restore, project creation, attachment upload, or binding verification still has failures.
 
 ### Requirements
@@ -1009,6 +1012,7 @@ Important statuses:
 
 - `imported`: prompt sent and account B `/c/{id}` observed.
 - `dry-run`: no real import was performed.
+- `would_update`: dry-run found a historical import, but the source conversation version changed and would be re-imported in a real run.
 - `duplicate`: confirmed duplicate skipped.
 - `duplicate_suspected`: likely duplicate skipped.
 - `error`: import failed.
@@ -1051,7 +1055,7 @@ Browser profiles may contain cookies and login state. Reports may contain chat t
 | No usable `share_url` | Check the account A export report; project-only reports can still be used by project restore. |
 | Account A export has `skipped_unavailable` | ChatGPT listed the project conversation, but the detail endpoint was unreadable or rate-limited. This is not a script failure; retry later with `-Skip` and `-Limit` if those conversations matter. |
 | Import does not become `imported` | The page did not reach a B-account `/c/{id}` URL; inspect `error` and try a single-link manual test. |
-| Duplicate rows are skipped | This is the default safety behavior; use `-AllowDuplicates` only if duplicate copies are acceptable. |
+| Duplicate rows are skipped | This is the default safety behavior. If source version metadata changed, dry-run reports `would_update`; use `-AllowDuplicates` only if duplicate copies are acceptable. |
 | `missing_local_file` during attachment restore | Re-run account A export without `-SkipProjectFiles`, then restore again. |
 | `File uploaded but attach failed` during attachment restore | The file upload may have completed, but the project-file binding API rejected the payload or verification could not see the attachment. Re-run restore once; if it persists, inspect `attachment_results[].error` in the latest restore report. |
 | Project creation fails | Check whether the target account supports projects and whether ChatGPT Web changed project APIs. |
