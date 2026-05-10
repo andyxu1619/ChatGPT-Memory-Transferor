@@ -650,13 +650,17 @@
       results.push(result);
       console.log(`[ok] ${result.project_name} | ${result.share_url}`);
     } catch (error) {
+      const message = String(error?.message || error);
+      const isUnavailableProjectConversation =
+        conversation.source === "project" &&
+        /Can't load conversation|HTTP 404|HTTP 410|HTTP 429|HTTP 500/i.test(message);
       const failedProject = {
-        project_name: "未知",
-        project_id: "",
-        project_source: "error-before-detail"
+        project_name: firstNonEmpty(conversation.project_name_hint, conversation.project_name, "未知"),
+        project_id: firstNonEmpty(conversation.project_id, conversation.gizmo_id),
+        project_source: firstNonEmpty(conversation.project_source_hint, conversation.project_source, "error-before-detail")
       };
       const failed = {
-        status: "error",
+        status: isUnavailableProjectConversation ? "skipped_unavailable" : "error",
         id: conversation.id,
         title: safeText(conversation.title || "Untitled conversation"),
         project_name: failedProject.project_name,
@@ -665,10 +669,15 @@
         source: conversation.source,
         create_time: conversation.create_time || null,
         update_time: conversation.update_time || null,
-        error: String(error?.message || error)
+        skipped_reason: isUnavailableProjectConversation ? "project_conversation_detail_unavailable" : "",
+        error: message
       };
       results.push(failed);
-      console.error(`[error] ${label}`, error);
+      if (isUnavailableProjectConversation) {
+        console.warn(`[skip] ${label}`, message);
+      } else {
+        console.error(`[error] ${label}`, error);
+      }
     }
 
     await sleep(CONFIG.delayMs);
@@ -677,6 +686,7 @@
   const finishedAt = new Date();
   const okCount = results.filter((item) => item.status === "ok" && item.share_url).length;
   const dryRunCount = results.filter((item) => item.status === "dry-run").length;
+  const skippedUnavailableCount = results.filter((item) => item.status === "skipped_unavailable").length;
   const errorCount = results.filter((item) => item.status === "error").length;
   const projectRecords = Array.from(projectById.values());
   const projects = projectRecords.filter((project) => String(project.id || "").startsWith("g-p-")).map((project) => ({
@@ -692,7 +702,7 @@
     return summary;
   }, {});
 
-  console.log(`[done] ${okCount} links created, ${errorCount} errors.`);
+  console.log(`[done] ${okCount} links created, ${skippedUnavailableCount} unavailable project conversations skipped, ${errorCount} errors.`);
 
   return {
     schema: "chatgpt-shared-link-migration-v2",
@@ -707,6 +717,7 @@
       processed: results.length,
       ok: okCount,
       dry_run: dryRunCount,
+      skipped_unavailable: skippedUnavailableCount,
       errors: errorCount,
       project_or_gizmo_records_discovered: projectById.size,
       projects_discovered: projects.length,

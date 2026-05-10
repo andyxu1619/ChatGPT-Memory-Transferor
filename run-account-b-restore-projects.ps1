@@ -1066,12 +1066,22 @@ function Invoke-UploadProjectFile {
   });
 
   async function getAccessToken() {
-    const response = await fetch("/api/auth/session", {
-      credentials: "include",
-      headers: { accept: "application/json" }
-    });
-    if (!response.ok) throw new Error("Cannot read ChatGPT session: HTTP " + response.status);
-    const session = await response.json();
+    async function readSession(url) {
+      const response = await fetch(url, {
+        credentials: "include",
+        headers: { accept: "application/json" }
+      });
+      if (!response.ok) return { ok: false, status: response.status };
+      const session = await response.json();
+      return { ok: true, session };
+    }
+
+    let result = await readSession("/api/auth/session");
+    if (!result.ok) {
+      result = await readSession("/api/auth/session?refresh=true&reason=gptsync_project_file_upload");
+    }
+    if (!result.ok) throw new Error("Cannot read ChatGPT session: HTTP " + result.status);
+    const session = result.session;
     if (!session || !session.accessToken) throw new Error("No accessToken found.");
     return session.accessToken;
   }
@@ -1207,45 +1217,50 @@ function Invoke-UploadProjectFile {
     const response = await fetch(uploadTarget.href, {
       method: "PUT",
       credentials: uploadTarget.origin === location.origin ? "include" : "omit",
-      headers: { "content-type": uploadFile.type || "application/octet-stream" },
+      headers: {
+        "content-type": uploadFile.type || "application/octet-stream",
+        "x-ms-blob-type": "BlockBlob"
+      },
       body: uploadFile
     });
     await readUploadResponse(response, "blob_upload");
     await processUploadedFile(fileId);
   }
 
+  const createdLocation = String(created.location || created.file_location || "").toLowerCase();
+  const fileLocation = ["fs", "sediment"].includes(createdLocation) ? createdLocation : "fs";
   const fileRecord = {
     file_response_type: "full_file_response",
-    id: fileId,
+    id: created.id || fileId,
     file_id: fileId,
     name: uploadFile.name,
+    file_name: uploadFile.name,
     type: uploadFile.type || "application/octet-stream",
+    mime_type: uploadFile.type || "application/octet-stream",
     size: uploadFile.size,
-    location: "file_service"
+    location: fileLocation
   };
 
   const attachBodies = [
+    { files: [{ file_id: fileId, location: fileLocation, name: uploadFile.name, file_name: uploadFile.name, type: uploadFile.type || "application/octet-stream", mime_type: uploadFile.type || "application/octet-stream", size: uploadFile.size }] },
+    { files: [{ id: created.id || fileId, file_id: fileId, location: fileLocation, name: uploadFile.name, type: uploadFile.type || "application/octet-stream", size: uploadFile.size }] },
     { files: [fileRecord] },
-    { files: [{ id: fileId, file_id: fileId, name: uploadFile.name, type: uploadFile.type || "application/octet-stream", size: uploadFile.size, location: "file_service" }] },
-    { file_ids: [fileId] },
-    { files: [fileId] }
+    { files: [{ file_id: fileId, location: fileLocation }] }
   ];
 
-  let attachError = "";
+  const attachErrors = [];
+  let attachOk = false;
   for (const body of attachBodies) {
     try {
       await api("/backend-api/projects/" + encodeURIComponent(projectId) + "/files", {
         method: "POST",
         body: JSON.stringify(body)
       });
-      attachError = "";
+      attachOk = true;
       break;
     } catch (error) {
-      attachError = String(error && error.message || error);
+      attachErrors.push(String(error && error.message || error));
     }
-  }
-  if (attachError) {
-    throw new Error("File uploaded but attach failed: " + attachError);
   }
 
   const after = await api("/backend-api/gizmos/" + encodeURIComponent(projectId) + "?include_files=true");
@@ -1254,6 +1269,10 @@ function Invoke-UploadProjectFile {
     return String(file.file_id || file.id || "") === fileId ||
       (String(file.name || "") === uploadFile.name && Number(file.size || 0) === Number(uploadFile.size || 0));
   });
+
+  if (!attachOk && !matched) {
+    throw new Error("File uploaded but attach failed: " + attachErrors.join(" | ").slice(0, 1200));
+  }
 
   return JSON.stringify({
     status: matched ? "uploaded" : "verify_failed",
@@ -1529,6 +1548,14 @@ try {
   Write-Host "CSV ：$($paths.CsvPath)"
   Write-Host "项目CSV：$($paths.ProjectCsvPath)"
   Write-Host "附件CSV：$($paths.AttachmentCsvPath)"
+  if (-not $DryRun -and (
+    $report.summary.errors -gt 0 -or
+    $report.summary.verify_failed -gt 0 -or
+    $report.summary.project_create_errors -gt 0 -or
+    ($null -ne $report.summary.attachment_errors -and $report.summary.attachment_errors -gt 0)
+  )) {
+    throw "B 账号项目/附件恢复完成但仍有失败项。请查看报告：$($paths.JsonPath)"
+  }
 } finally {
   if ($ws) {
     try {
