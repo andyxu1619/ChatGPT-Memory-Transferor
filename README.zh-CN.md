@@ -37,6 +37,12 @@ This project is experimental and depends on ChatGPT Web behavior, shared-link be
 - 用于手动检查共享链接输入的本地 HTML 工具。
 - 用于公开发布前检查的 release validation 脚本。
 
+## 当前运行说明
+
+- ChatGPT 项目列表能看到、但详情接口暂时不可读的项目内对话，会记录为 `skipped_unavailable`，不会把整次 A 导出判定为失败。
+- B 账号导入只有在浏览器进入可用的 `/c/{id}` 对话地址后才算成功。
+- 项目附件还原使用当前项目文件绑定接口要求的 payload；上传、绑定或复查仍有错误时会明确失败。
+
 ## 环境要求
 
 - Windows。
