@@ -6,6 +6,7 @@ param(
   [int]$Limit = 0,
   [string]$Prompt = "请基于这个共享对话继续。请只回复：已接收。",
   [int]$Port = 9228,
+  [int]$PostItemDelayMs = 500,
   [switch]$AssumeYes,
   [switch]$AllowDuplicates,
   [switch]$NoPause
@@ -1107,8 +1108,13 @@ function Invoke-OrchestratedImport {
     [bool]$DryRunMode,
     [string]$PromptText,
     $DuplicateIndex,
-    [bool]$AllowDuplicateItems
+    [bool]$AllowDuplicateItems,
+    [int]$AfterItemDelayMs
   )
+
+  if ($AfterItemDelayMs -lt 0) {
+    throw "-PostItemDelayMs 不能小于 0。"
+  }
 
   $startedAt = Get-Date
   $results = @()
@@ -1292,7 +1298,9 @@ function Invoke-OrchestratedImport {
       }
     }
 
-    Start-Sleep -Milliseconds 1500
+    if ($AfterItemDelayMs -gt 0) {
+      Start-Sleep -Milliseconds $AfterItemDelayMs
+    }
   }
 
   $finishedAt = Get-Date
@@ -1476,7 +1484,7 @@ try {
   }
 
   Write-Step "开始 B 账号自动导入"
-  $report = Invoke-OrchestratedImport -WebSocket $ws -Items $items -DryRunMode ([bool]$DryRun) -PromptText $Prompt -DuplicateIndex $duplicateIndex -AllowDuplicateItems ([bool]$AllowDuplicates)
+  $report = Invoke-OrchestratedImport -WebSocket $ws -Items $items -DryRunMode ([bool]$DryRun) -PromptText $Prompt -DuplicateIndex $duplicateIndex -AllowDuplicateItems ([bool]$AllowDuplicates) -AfterItemDelayMs $PostItemDelayMs
   $report | Add-Member -NotePropertyName source_json -NotePropertyValue $resolvedInputJson -Force
   $report | Add-Member -NotePropertyName source_projects -NotePropertyValue $sourceProjects -Force
   $report.summary | Add-Member -NotePropertyName source_projects -NotePropertyValue @($sourceProjects).Count -Force
