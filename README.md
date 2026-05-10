@@ -1,5 +1,7 @@
 # ChatGPT Memory Transferor
 
+[English](README.md) | [中文](README.zh-CN.md)
+
 ChatGPT Memory Transferor is an experimental Windows toolkit for copying ChatGPT conversations from one account to another through ChatGPT shared links and browser automation. It can also help restore project membership and project attachments when the source export contains project metadata.
 
 This is not an official OpenAI or ChatGPT migration API. It uses the ChatGPT web app through your local browser login state.
@@ -73,6 +75,7 @@ See [Project Details](docs/project-details.md) before running real imports or pr
 
 ## Documentation
 
+- [Chinese README](README.zh-CN.md)
 - [Project details](docs/project-details.md)
 - [Manual test checklist](docs/manual-test-checklist.md)
 - [Publishing checklist](docs/publishing-checklist.md)

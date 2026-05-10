@@ -251,6 +251,7 @@ Set-Location -LiteralPath $repoRoot
 $trackedFiles = Invoke-GitLines -Arguments @("ls-files")
 $requiredContentFiles = @(
   "README.md",
+  "README.zh-CN.md",
   "CHANGELOG.md",
   "CONTRIBUTING.md",
   "SECURITY.md",
@@ -307,6 +308,7 @@ if (-not (Test-Path -LiteralPath $gitignorePath)) {
 
 foreach ($requiredFile in @(
   "README.md",
+  "README.zh-CN.md",
   "LICENSE",
   "CHANGELOG.md",
   "CONTRIBUTING.md",
@@ -325,6 +327,7 @@ if (Test-Path -LiteralPath $readmePath) {
   $readme = Get-Content -Raw -LiteralPath $readmePath
   Assert-Contains -Content $readme -Pattern "# ChatGPT Memory Transferor" -Message "README must use the official project name."
   Assert-Contains -Content $readme -Pattern $expectedCloneUrl -Message "README clone URL must point to the real GitHub repository."
+  Assert-Contains -Content $readme -Pattern "README.zh-CN.md" -Message "README must link to the Chinese README."
   Assert-Contains -Content $readme -Pattern "docs/project-details.md" -Message "README must link to docs/project-details.md."
 
   foreach ($pattern in @(
@@ -338,6 +341,16 @@ if (Test-Path -LiteralPath $readmePath) {
       Add-Failure "README contains a placeholder repository address."
     }
   }
+}
+
+$chineseReadmePath = Join-Path $repoRoot "README.zh-CN.md"
+if (Test-Path -LiteralPath $chineseReadmePath) {
+  $chineseReadme = Get-Content -Raw -LiteralPath $chineseReadmePath
+  Assert-Contains -Content $chineseReadme -Pattern "# ChatGPT Memory Transferor" -Message "Chinese README must use the official project name."
+  Assert-Contains -Content $chineseReadme -Pattern $expectedCloneUrl -Message "Chinese README clone URL must point to the real GitHub repository."
+  Assert-Contains -Content $chineseReadme -Pattern "README.md" -Message "Chinese README must link back to the English README."
+  Assert-Contains -Content $chineseReadme -Pattern "docs/project-details.md" -Message "Chinese README must link to docs/project-details.md."
+  Assert-Contains -Content $chineseReadme -Pattern $securityEmail -Message "Chinese README must contain the security contact email."
 }
 
 $projectDetailsPath = Join-Path $repoRoot "docs/project-details.md"
