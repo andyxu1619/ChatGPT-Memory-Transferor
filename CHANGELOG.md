@@ -6,6 +6,16 @@
 
 - Added a concise Chinese README and linked it from the English README.
 
+### Fixed
+
+- Classified project-only conversations whose detail endpoint is unavailable as `skipped_unavailable` instead of export errors, while preserving project metadata in the report.
+- Hardened account B import so shared-link pages are not treated as successful imports unless a durable target conversation ID is found, including a recent-conversation fallback after sending the migration prompt.
+- Updated project attachment upload and binding for the current ChatGPT project-file API, including valid `location` values and strict failure reporting when upload or binding verification fails.
+
+### Validation
+
+- Verified the main workflow with live account A export, account B import, project restore, attachment restore, syntax checks, `tests/validate-release.ps1`, and `git diff --check`.
+
 ## v0.1.0 - 2026-05-10
 
 ### Added

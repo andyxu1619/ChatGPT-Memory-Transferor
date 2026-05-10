@@ -79,6 +79,12 @@ Languages:
 - 它使用自身所在目录作为项目根目录，因此可以从资源管理器双击运行，也可以从命令行运行；报告、CSV 和日志仍写入同一个 `outputs/` 目录。
 - 任一阶段失败时命令会停下并保留窗口，方便查看错误；不会静默跳过失败继续执行后续阶段。
 
+当前运行时保护：
+
+- A 导出会重试项目对话详情接口。若某些仅从项目列表发现的对话详情仍返回不可读取、服务端错误或限流，报告会把它们记为 `skipped_unavailable`，而不是把整次导出标为失败。
+- B 导入只有拿到 B 账号稳定对话 ID 后才会写入 `imported`。如果页面没有直接跳到 `/c/{id}`，脚本会再从 B 账号最近对话列表中按标题和时间窗口找回刚创建的对话 ID。
+- B 项目附件上传后会按当前项目文件接口要求提交 `files[]` 对象，其中包含 `file_id` 和合法 `location` 值。真实项目还原只要存在聊天、项目创建、附件上传或绑定失败，就会以非零错误退出。
+
 ### 环境要求
 
 - Windows 10/11。
@@ -431,7 +437,7 @@ outputs/chatgpt-account-a-dry-run_share-links-with-projects_yyyy-MM-dd_HH-mm-ss.
 
 | 字段 | 说明 |
 | --- | --- |
-| `status` | `ok`、`dry-run` 或 `error` 等状态。 |
+| `status` | `ok`、`dry-run`、`skipped_unavailable` 或 `error` 等状态。 |
 | `id` | A 账号源对话 ID。 |
 | `title` | 对话标题。 |
 | `source` | 对话来源分类，例如 visible/archive/project 等。 |
@@ -440,6 +446,7 @@ outputs/chatgpt-account-a-dry-run_share-links-with-projects_yyyy-MM-dd_HH-mm-ss.
 | `project_source` | 项目归属识别来源。 |
 | `share_id` | 共享链接 ID。 |
 | `share_url` | 可导入的 ChatGPT 共享链接。 |
+| `skipped_reason` | 跳过原因，例如项目对话详情不可读取。 |
 | `error` | 失败原因。 |
 
 `projects[]` 常见字段：
@@ -631,6 +638,10 @@ A 和 B 账号必须隔离登录态，避免同一个浏览器窗口频繁切换
 
 这通常表示当前导出中没有可导入聊天，但仍有项目清单。可以跳过 B 聊天导入，直接运行项目还原脚本，用于创建空项目或转移已下载附件。
 
+#### A 导出报告中出现 `skipped_unavailable` 怎么办？
+
+这表示 ChatGPT 项目列表能看到该对话，但详情接口暂时不可读取、被限流或返回服务端错误。它不是脚本错误；报告会继续保留项目名称和项目 ID。若这些对话很重要，可以稍后用 `-Skip` 和 `-Limit` 缩小范围重试。
+
 #### B 导入报告中出现重复怎么办？
 
 默认行为会用历史导入报告和 B 账号聊天列表做重复检测，并跳过确定重复或疑似重复项。如果你明确要重复导入，可使用 `-AllowDuplicates`。
@@ -638,6 +649,10 @@ A 和 B 账号必须隔离登录态，避免同一个浏览器窗口频繁切换
 #### 附件出现 `missing_local_file` 怎么办？
 
 说明 B 侧尝试上传附件时，A 导出 JSON 中记录的 `local_path` 不存在。重新运行 A 导出且不要使用 `-SkipProjectFiles`，确认附件已下载到 `outputs/project-files/account-a/` 后再执行项目还原。
+
+#### 附件出现 `File uploaded but attach failed` 怎么办？
+
+文件可能已上传，但项目文件绑定接口拒绝了请求或复查未看到附件。先重新运行项目还原；若仍失败，保留最新 restore report，检查 `attachment_results[].error` 中的 HTTP 状态和字段要求。
 
 #### 可以在 macOS 或 Linux 上运行吗？
 
@@ -660,6 +675,12 @@ powershell -ExecutionPolicy Bypass -File .\tests\validate-release.ps1
 ```
 
 再按 `docs/manual-test-checklist.md` 用 1 到 3 条非敏感对话做手动验证。
+
+本轮修复后的推荐验证边界：
+
+- 静态层：PowerShell AST 语法检查、`node --check account-a-create-share-links-cdp.js`、`tests/validate-release.ps1`、`git diff --check`。
+- 只读层：`run-account-a-share-link-export.ps1 -SelfTest -NoPause` 和 `run-account-b-shared-link-import.ps1 -SelfTest -NoPause`。
+- 写入层：先用 `-DryRun` 和 `-Limit` 小批量确认，再执行真实 B 导入和 B 项目还原。真实报告中的 `summary.errors`、`summary.verify_failed`、`summary.project_create_errors`、`summary.attachment_errors` 都应为 `0`。
 
 维护原则：
 
@@ -741,6 +762,12 @@ One-click full migration launcher:
 - It first calls `run-full-shared-link-migration.ps1 -AssumeYes -NoPause` to run account A export and account B shared-link import. It then calls `run-account-b-restore-projects.ps1 -AssumeYes -NoPause` to restore projects, move imported chats, and upload project attachments.
 - It resolves the repository root from its own file location, so it can be launched from File Explorer or a terminal. Reports, CSV files, and logs still go to the same `outputs/` directory.
 - If any stage fails, the command stops and keeps the window open so you can inspect the error instead of silently continuing to the next stage.
+
+Current runtime protections:
+
+- Account A export retries project-conversation detail requests. If a project-only conversation is still unreadable, rate-limited, or returning a server error, the report marks it as `skipped_unavailable` instead of treating the whole export as failed.
+- Account B import records `imported` only after it has a durable account B conversation ID. If the page does not directly land on `/c/{id}`, the script searches the recent account B conversation list by title and send-time window.
+- Account B project-file restore sends `files[]` objects with `file_id` and a valid `location` value required by the current project-file API. Real restore runs exit with an error when chat restore, project creation, attachment upload, or binding verification still has failures.
 
 ### Requirements
 
@@ -966,6 +993,8 @@ Important fields:
 - `projects`: source project list for account B restore.
 - `results[].share_url`: ChatGPT shared link.
 - `results[].project_name` and `results[].project_id`: source project mapping.
+- `results[].status`: `ok`, `dry-run`, `skipped_unavailable`, or `error`.
+- `results[].skipped_reason`: reason for a skipped source row, such as an unreadable project-only conversation.
 - `projects[].files[].local_path`: downloaded local attachment path.
 - `summary.project_files_downloaded` and `summary.project_files_download_errors`: attachment download health.
 
@@ -1020,9 +1049,11 @@ Browser profiles may contain cookies and login state. Reports may contain chat t
 | DevTools port does not start | Close the dedicated browser window for that account and retry. |
 | Login state not detected | Sign in inside the dedicated browser window, then return to the PowerShell prompt. |
 | No usable `share_url` | Check the account A export report; project-only reports can still be used by project restore. |
+| Account A export has `skipped_unavailable` | ChatGPT listed the project conversation, but the detail endpoint was unreadable or rate-limited. This is not a script failure; retry later with `-Skip` and `-Limit` if those conversations matter. |
 | Import does not become `imported` | The page did not reach a B-account `/c/{id}` URL; inspect `error` and try a single-link manual test. |
 | Duplicate rows are skipped | This is the default safety behavior; use `-AllowDuplicates` only if duplicate copies are acceptable. |
 | `missing_local_file` during attachment restore | Re-run account A export without `-SkipProjectFiles`, then restore again. |
+| `File uploaded but attach failed` during attachment restore | The file upload may have completed, but the project-file binding API rejected the payload or verification could not see the attachment. Re-run restore once; if it persists, inspect `attachment_results[].error` in the latest restore report. |
 | Project creation fails | Check whether the target account supports projects and whether ChatGPT Web changed project APIs. |
 | Network/proxy issue | Keep Upnet/VPN running if that is the current working route, and verify ChatGPT opens in the dedicated browser. |
 
@@ -1035,6 +1066,12 @@ powershell -ExecutionPolicy Bypass -File .\tests\validate-release.ps1
 ```
 
 Then follow `docs/manual-test-checklist.md` with 1 to 3 non-sensitive conversations.
+
+Recommended validation boundary after runtime behavior changes:
+
+- Static: PowerShell AST syntax checks, `node --check account-a-create-share-links-cdp.js`, `tests/validate-release.ps1`, and `git diff --check`.
+- Read-only: `run-account-a-share-link-export.ps1 -SelfTest -NoPause` and `run-account-b-shared-link-import.ps1 -SelfTest -NoPause`.
+- Write path: start with `-DryRun` and `-Limit`, then run a small real account B import and project restore. Real reports should have `summary.errors`, `summary.verify_failed`, `summary.project_create_errors`, and `summary.attachment_errors` equal to `0`.
 
 ### License
 
