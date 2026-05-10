@@ -37,6 +37,12 @@ This project is experimental and depends on ChatGPT Web behavior, shared-link be
 - Local HTML helper for manual shared-link review.
 - Release validation script for public repository checks.
 
+## Current runtime notes
+
+- Project-only conversations that ChatGPT lists but does not return from the detail endpoint are reported as `skipped_unavailable`, not as export failures.
+- Account B imports are treated as successful only after the browser reaches a usable `/c/{id}` conversation URL.
+- Project attachment restore uses the current project-file binding payload and fails loudly if upload, binding, or verification still has errors.
+
 ## Requirements
 
 - Windows.
