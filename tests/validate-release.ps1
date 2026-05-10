@@ -277,9 +277,13 @@ Assert-Contains -Content $bImportScript -Pattern "match_imported_id" -Message "D
 $aExportScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "run-account-a-share-link-export.ps1")
 Assert-Contains -Content $aExportScript -Pattern "Invoke-BrowserDownloadFile" -Message "A export must have a browser-download fallback for project files."
 
+$aExportInjector = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "account-a-create-share-links-cdp.js")
+Assert-Contains -Content $aExportInjector -Pattern "skipped_unavailable" -Message "A export must classify unreadable project-only conversations as skipped, not export errors."
+
 $restoreScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "run-account-b-restore-projects.ps1")
 Assert-Contains -Content $restoreScript -Pattern "Duplicate rows can carry usable imported IDs" -Message "Project restore must keep duplicate rows with usable imported IDs eligible."
 Assert-Contains -Content $restoreScript -Pattern "sharing: normalizeSharing" -Message "Project creation must send the required sharing payload."
+Assert-Contains -Content $restoreScript -Pattern "File uploaded but attach failed" -Message "Project attachment upload must fail loudly when upload succeeds but project binding cannot be verified."
 
 $gitignorePath = Join-Path $repoRoot ".gitignore"
 if (-not (Test-Path -LiteralPath $gitignorePath)) {

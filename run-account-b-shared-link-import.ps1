@@ -898,10 +898,6 @@ function Invoke-OpenSharedComposer {
     });
   }
 
-  if (findComposer()) {
-    return JSON.stringify({ ok: true, hasComposer: true, clicked: false, href: location.href });
-  }
-
   const button = findClickableByText([
     /continue\s+this\s+conversation/i,
     /continue\s+conversation/i,
@@ -913,6 +909,17 @@ function Invoke-OpenSharedComposer {
     /开始聊天/,
     /开始新对话/
   ]);
+
+  const onSharePage = location.pathname.startsWith("/share/");
+  if (onSharePage && button) {
+    button.click();
+    return JSON.stringify({ ok: true, hasComposer: false, clicked: true, href: location.href });
+  }
+
+  const composer = findComposer();
+  if (composer) {
+    return JSON.stringify({ ok: true, hasComposer: true, clicked: false, href: location.href, sharePage: onSharePage });
+  }
 
   if (button) {
     button.click();
@@ -1044,19 +1051,21 @@ function Invoke-SendMigrationPrompt {
   };
 
   const composer = await waitFor(findComposer, 45000, "message composer");
+  const startedOnSharePage = location.pathname.startsWith("/share/");
   setComposerText(composer, promptText);
   const sendButton = await waitFor(findSendButton, 45000, "send button");
   sendButton.click();
 
   const started = Date.now();
+  const timeoutMs = startedOnSharePage ? 300000 : 90000;
   let sawStop = false;
-  while (Date.now() - started < 90000) {
+  while (Date.now() - started < timeoutMs) {
     if (hasStopButton()) sawStop = true;
     if (sawStop && !hasStopButton()) {
       return JSON.stringify({ ok: true, href: location.href, evidence: "response-complete" });
     }
     if (Date.now() - started > 6000 && !composerText()) {
-      if (location.pathname.startsWith("/share/") && Date.now() - started < 30000) {
+      if (startedOnSharePage) {
         await sleep(500);
         continue;
       }
@@ -1066,6 +1075,74 @@ function Invoke-SendMigrationPrompt {
   }
 
   return JSON.stringify({ ok: true, href: location.href, evidence: "send-clicked" });
+})()
+"@
+
+  return Invoke-CdpJsonExpression -WebSocket $WebSocket -Expression $expression
+}
+
+function Find-RecentConversationByTitle {
+  param(
+    [System.Net.WebSockets.ClientWebSocket]$WebSocket,
+    [string]$Title,
+    [string]$StartedAfterIso
+  )
+
+  $titleJson = $Title | ConvertTo-Json -Compress
+  $startedAfterJson = $StartedAfterIso | ConvertTo-Json -Compress
+  $expression = @"
+(async () => {
+  const title = $titleJson;
+  const startedAfter = Date.parse($startedAfterJson);
+  const safeText = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
+  const sessionResponse = await fetch("/api/auth/session", { credentials: "include" });
+  if (!sessionResponse.ok) {
+    return JSON.stringify({ ok: false, status: sessionResponse.status, stage: "session" });
+  }
+  const session = await sessionResponse.json();
+  const token = session && session.accessToken;
+  if (!token) return JSON.stringify({ ok: false, stage: "token" });
+
+  const response = await fetch("/backend-api/conversations?offset=0&limit=50&order=updated&is_archived=false&is_starred=false", {
+    credentials: "include",
+    headers: { accept: "application/json", authorization: "Bearer " + token }
+  });
+  if (!response.ok) {
+    return JSON.stringify({ ok: false, status: response.status, stage: "list" });
+  }
+
+  const data = await response.json();
+  const targetTitle = safeText(title).toLowerCase();
+  const items = Array.isArray(data.items) ? data.items : [];
+  const candidates = items
+    .map((item) => ({
+      id: item && item.id || "",
+      title: safeText(item && item.title),
+      create_time: item && item.create_time || "",
+      update_time: item && item.update_time || ""
+    }))
+    .filter((item) => item.id && safeText(item.title).toLowerCase() === targetTitle)
+    .filter((item) => {
+      const updated = Date.parse(item.update_time || item.create_time || "");
+      return Number.isFinite(updated) && Number.isFinite(startedAfter) && updated >= startedAfter;
+    })
+    .sort((a, b) => Date.parse(b.update_time || b.create_time || "") - Date.parse(a.update_time || a.create_time || ""));
+
+  if (!candidates.length) {
+    return JSON.stringify({ ok: true, found: false, scanned: items.length });
+  }
+
+  const match = candidates[0];
+  return JSON.stringify({
+    ok: true,
+    found: true,
+    id: match.id,
+    url: "https://chatgpt.com/c/" + match.id,
+    title: match.title,
+    update_time: match.update_time,
+    create_time: match.create_time,
+    scanned: items.length
+  });
 })()
 "@
 
@@ -1218,6 +1295,7 @@ function Invoke-OrchestratedImport {
         throw "没有找到可发送消息的输入框。"
       }
 
+      $sendStartedAfter = (Get-Date).ToUniversalTime().AddSeconds(-5).ToString("o")
       $sendResult = Invoke-SendMigrationPrompt -WebSocket $WebSocket -PromptText $PromptText
       if (-not $sendResult.ok) {
         throw "发送触发消息失败。"
@@ -1233,6 +1311,15 @@ function Invoke-OrchestratedImport {
         Start-Sleep -Seconds 1
         $importedUrl = Get-PageHref -WebSocket $WebSocket
         $importedId = Get-ConversationIdFromUrl -Url $importedUrl
+      }
+
+      if ([string]::IsNullOrWhiteSpace($importedId)) {
+        $recentMatch = Find-RecentConversationByTitle -WebSocket $WebSocket -Title $title -StartedAfterIso $sendStartedAfter
+        if ($recentMatch -and $recentMatch.found -and -not [string]::IsNullOrWhiteSpace([string]$recentMatch.id)) {
+          $importedId = [string]$recentMatch.id
+          $importedUrl = [string]$recentMatch.url
+          $sendResult.evidence = "$($sendResult.evidence);recent-list-match"
+        }
       }
 
       if ([string]::IsNullOrWhiteSpace($importedId)) {
@@ -1491,6 +1578,9 @@ try {
   Write-Host "失败：$($report.summary.errors) 条"
   Write-Host "JSON：$($paths.JsonPath)"
   Write-Host "CSV ：$($paths.CsvPath)"
+  if (-not $DryRun -and $report.summary.errors -gt 0) {
+    throw "B 账号导入完成但仍有 $($report.summary.errors) 条失败。请查看报告：$($paths.JsonPath)"
+  }
 } finally {
   if ($ws) {
     try {
