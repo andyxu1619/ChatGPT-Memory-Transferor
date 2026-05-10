@@ -5,7 +5,7 @@
     isAnonymous: true,
     makePublic: true,
     pageLimit: 100,
-    delayMs: 1200,
+    delayMs: 500,
     retryLimit: 5,
     requestTimeoutMs: 45000,
     dryRun: false,
@@ -20,6 +20,9 @@
   }
   if (Number.isFinite(EXTERNAL_OPTIONS.skipConversations) && EXTERNAL_OPTIONS.skipConversations > 0) {
     CONFIG.skipConversations = EXTERNAL_OPTIONS.skipConversations;
+  }
+  if (Number.isFinite(EXTERNAL_OPTIONS.delayMs) && EXTERNAL_OPTIONS.delayMs >= 0) {
+    CONFIG.delayMs = EXTERNAL_OPTIONS.delayMs;
   }
 
   const startedAt = new Date();

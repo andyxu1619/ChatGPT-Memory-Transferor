@@ -4,6 +4,7 @@ param(
   [switch]$SkipProjectFiles,
   [int]$Skip = 0,
   [int]$Limit = 0,
+  [int]$DelayMs = 500,
   [switch]$NoPause
 )
 
@@ -666,11 +667,17 @@ function Invoke-BackgroundExport {
     [System.Net.WebSockets.ClientWebSocket]$WebSocket,
     [string]$Source,
     [bool]$DryRunMode,
-    [int]$MaxItems
+    [int]$MaxItems,
+    [int]$ItemDelayMs
   )
+
+  if ($ItemDelayMs -lt 0) {
+    throw "-DelayMs 不能小于 0。"
+  }
 
   $options = @{
     dryRun = $DryRunMode
+    delayMs = $ItemDelayMs
   }
   if ($MaxItems -gt 0) {
     $options.maxConversations = $MaxItems
@@ -899,7 +906,7 @@ try {
 
   Write-Step "开始批量生成全部共享链接并识别项目"
   $expression = Get-Content -Raw -LiteralPath $injectScript
-  $report = Invoke-BackgroundExport -WebSocket $ws -Source $expression -DryRunMode ([bool]$DryRun) -MaxItems $Limit
+  $report = Invoke-BackgroundExport -WebSocket $ws -Source $expression -DryRunMode ([bool]$DryRun) -MaxItems $Limit -ItemDelayMs $DelayMs
 
   if ($DryRun) {
     Write-Host "Dry run：跳过项目附件下载。"
