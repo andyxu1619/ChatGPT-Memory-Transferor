@@ -26,6 +26,7 @@ Languages:
 - 记录项目元数据和项目附件元数据，可选把 A 账号项目附件下载到本机。
 - 在 B 账号中逐条打开共享链接并发送一条迁移触发消息，让 B 账号生成对话副本。
 - 检查本机历史报告和 B 账号当前聊天列表，降低重复导入概率。
+- 对已导入但 A 端源版本变化的聊天，重新导入最新副本并默认隐藏旧副本，避免 B 账号保留多条同源聊天。
 - 在 B 账号中匹配或创建项目，把已导入聊天移回对应项目，并可重新上传项目附件。
 - 提供可双击的一键完整迁移命令，把 A 导出、B 导入、项目还原三段串起来。
 - 在自动导入不可用时，提供本地 HTML 手动导航工具。
@@ -61,7 +62,7 @@ Languages:
 
 2. B 账号导入
 
-   `run-account-b-shared-link-import.ps1` 启动 `browser-profile-account-b/`，默认使用 DevTools 端口 `9228`。用户在该窗口登录 B 账号后，脚本读取 A 导出 JSON，逐条打开 `https://chatgpt.com/share/...` 共享链接，并发送触发消息。只有页面进入 B 账号自己的 `/c/{id}` 对话 URL 后，才会把该条记录标记为 `imported`。
+   `run-account-b-shared-link-import.ps1` 启动 `browser-profile-account-b/`，默认使用 DevTools 端口 `9228`。用户在该窗口登录 B 账号后，脚本读取 A 导出 JSON，逐条打开 `https://chatgpt.com/share/...` 共享链接，并发送触发消息。只有页面进入 B 账号自己的 `/c/{id}` 对话 URL 后，才会把新记录标记为 `imported`。如果历史报告显示同一 A 源会话已导入，但本次 `current_node_id` 或 `update_time` 已更新，则标记为 `updated`，并默认隐藏旧的 B 端副本。
 
 3. B 账号项目还原
 
@@ -83,7 +84,7 @@ Languages:
 
 - A 导出会重试项目对话详情接口。若某些仅从项目列表发现的对话详情仍返回不可读取、服务端错误或限流，报告会把它们记为 `skipped_unavailable`，而不是把整次导出标为失败。
 - B 导入只有拿到 B 账号稳定对话 ID 后才会写入 `imported`。如果页面没有直接跳到 `/c/{id}`，脚本会再从 B 账号最近对话列表中按标题和时间窗口找回刚创建的对话 ID。
-- B 导入重复检测会尽量保留并比较 A 源对话的 `current_node_id` 或 `update_time`。如果历史报告显示已导入，但当前 A 源对话版本已经变化，dry run 会把该行标为 `would_update`，真实运行会重新导入最新共享快照。
+- B 导入重复检测会尽量保留并比较 A 源对话的 `current_node_id` 或 `update_time`。如果历史报告显示已导入，但当前 A 源对话版本已经变化，dry run 会把该行标为 `would_update`；真实运行会先导入最新共享快照，再隐藏被替换的旧副本。隐藏旧副本失败会把该行标为 `error`。
 - B 项目附件上传后会按当前项目文件接口要求提交 `files[]` 对象，其中包含 `file_id` 和合法 `location` 值。真实项目还原只要存在聊天、项目创建、附件上传或绑定失败，就会以非零错误退出。
 
 ### 环境要求
@@ -363,6 +364,7 @@ run-account-a-to-b-full-sync.cmd
 | `-Port <n>` | `9228` | B 账号专用浏览器 DevTools 端口。 |
 | `-AssumeYes` | 关闭 | 跳过真实导入前的 `YES` 确认。 |
 | `-AllowDuplicates` | 关闭 | 允许重复导入，不根据历史报告和 B 账号聊天列表跳过。 |
+| `-KeepSuperseded` | 关闭 | 源版本变化时保留旧 B 端副本；默认会在新副本导入成功后隐藏旧副本。 |
 | `-NoPause` | 关闭 | 脚本结束时不等待 Enter。 |
 
 固定本地资源：
@@ -396,6 +398,7 @@ run-account-a-to-b-full-sync.cmd
 | `-ImportSkip <n>` | `0` | B 导入阶段跳过数量。 |
 | `-AssumeYes` | 关闭 | 传给 B 导入阶段，跳过确认。 |
 | `-AllowDuplicates` | 关闭 | 传给 B 导入阶段，允许重复导入。 |
+| `-KeepSuperseded` | 关闭 | 传给 B 导入阶段，源版本变化时保留旧副本；默认替换旧副本。 |
 | `-NoPause` | 关闭 | 脚本结束时不等待 Enter。 |
 
 #### `run-account-a-to-b-full-sync.cmd`
@@ -490,7 +493,7 @@ outputs/chatgpt-account-b-dry-run_import-report_yyyy-MM-dd_HH-mm-ss.csv
 
 | 字段 | 说明 |
 | --- | --- |
-| `schema` | 当前导入结构版本，例如 `chatgpt-shared-link-import-v1`。 |
+| `schema` | 当前导入结构版本，例如 `chatgpt-shared-link-import-v2`。 |
 | `source_json` | 本次读取的 A 导出 JSON 路径。 |
 | `source_projects` | 从 A 导出 JSON 传递过来的源项目清单。 |
 | `config` | 导入配置，包括 prompt、延迟和重复检测设置。 |
@@ -502,8 +505,9 @@ outputs/chatgpt-account-b-dry-run_import-report_yyyy-MM-dd_HH-mm-ss.csv
 | 状态 | 含义 |
 | --- | --- |
 | `imported` | 已发送触发消息，并确认进入 B 账号 `/c/{id}` 对话页。 |
+| `updated` | A 源对话版本已变化，已导入最新 B 端副本，并按默认策略隐藏旧副本。 |
 | `dry-run` | Dry run 记录，未执行真实导入。 |
-| `would_update` | Dry run 发现历史导入存在，但 A 源对话版本已经变化；真实运行会重新导入。 |
+| `would_update` | Dry run 发现历史导入存在，但 A 源对话版本已经变化；真实运行会重新导入并默认隐藏旧副本。 |
 | `duplicate` | 已确认重复，已跳过。 |
 | `duplicate_suspected` | 疑似重复，默认跳过以降低重复导入风险。 |
 | `error` | 导入失败，查看 `error` 和 `imported_url`。 |
@@ -646,7 +650,7 @@ A 和 B 账号必须隔离登录态，避免同一个浏览器窗口频繁切换
 
 #### B 导入报告中出现重复怎么办？
 
-默认行为会用历史导入报告和 B 账号聊天列表做重复检测，并跳过确定重复或疑似重复项。如果历史报告带有 A 源对话版本信息，脚本会比较 `current_node_id` 或 `update_time`；源版本变化时 dry run 会报告 `would_update`。如果你明确要重复导入，可使用 `-AllowDuplicates`。
+默认行为会用历史导入报告和 B 账号聊天列表做重复检测，并跳过确定重复或疑似重复项。如果历史报告带有 A 源对话版本信息，脚本会比较 `current_node_id` 或 `update_time`；源版本变化时 dry run 会报告 `would_update`，真实运行会导入最新副本并隐藏旧副本。如果你明确要保留旧副本，可使用 `-KeepSuperseded`；如果你明确要无条件重复导入，可使用 `-AllowDuplicates`。
 
 #### 附件出现 `missing_local_file` 怎么办？
 
@@ -712,6 +716,7 @@ Primary goals:
 - Optionally download account A project attachments to local `outputs/project-files/account-a/`.
 - Open shared links in account B, send a migration prompt, and create account B conversation copies.
 - Detect likely duplicates from local reports and account B's visible conversation list.
+- Re-import changed source conversations and hide the superseded account B copy by default, so repeated updates do not leave multiple visible copies of the same source chat.
 - Recreate or match projects in account B, move imported conversations back into projects, and optionally re-upload project attachments.
 - Provide a double-click full migration launcher that chains account A export, account B import, and project restore.
 - Provide a local HTML fallback when automatic import is not available.
@@ -747,7 +752,7 @@ The workflow has three main stages.
 
 2. Account B import
 
-   `run-account-b-shared-link-import.ps1` launches `browser-profile-account-b/` on DevTools port `9228` by default. After you sign in to account B, it reads account A's export JSON, opens each shared link, and sends a prompt. A row is marked `imported` only after the page reaches an account B `/c/{id}` conversation URL.
+   `run-account-b-shared-link-import.ps1` launches `browser-profile-account-b/` on DevTools port `9228` by default. After you sign in to account B, it reads account A's export JSON, opens each shared link, and sends a prompt. A new row is marked `imported` only after the page reaches an account B `/c/{id}` conversation URL. If a historical import exists for the same account A source conversation and the current `current_node_id` or `update_time` changed, the row is marked `updated` and the older account B copy is hidden by default.
 
 3. Account B project restore
 
@@ -769,7 +774,7 @@ Current runtime protections:
 
 - Account A export retries project-conversation detail requests. If a project-only conversation is still unreadable, rate-limited, or returning a server error, the report marks it as `skipped_unavailable` instead of treating the whole export as failed.
 - Account B import records `imported` only after it has a durable account B conversation ID. If the page does not directly land on `/c/{id}`, the script searches the recent account B conversation list by title and send-time window.
-- Account B duplicate detection preserves source `current_node_id` or `update_time` when available. If a historical import exists but the account A source conversation version changed, dry-run reports `would_update` and a real run imports the latest shared snapshot again.
+- Account B duplicate detection preserves source `current_node_id` or `update_time` when available. If a historical import exists but the account A source conversation version changed, dry-run reports `would_update`; a real run imports the latest shared snapshot, then hides the superseded target copy. Failure to hide the old copy is reported as `error`.
 - Account B project-file restore sends `files[]` objects with `file_id` and a valid `location` value required by the current project-file API. Real restore runs exit with an error when chat restore, project creation, attachment upload, or binding verification still has failures.
 
 ### Requirements
@@ -941,6 +946,7 @@ Start with 1 to 3 non-sensitive conversations before running a larger migration.
 | `-Port <n>` | `9228` | DevTools port for the account B browser. |
 | `-AssumeYes` | Off | Skip the `YES` confirmation. |
 | `-AllowDuplicates` | Off | Import even when duplicates are detected. |
+| `-KeepSuperseded` | Off | Keep the older account B copy when a changed source conversation is re-imported; by default the older copy is hidden after the new copy succeeds. |
 | `-NoPause` | Off | Do not wait for Enter at the end. |
 
 #### `run-account-b-restore-projects.ps1`
@@ -968,6 +974,7 @@ Start with 1 to 3 non-sensitive conversations before running a larger migration.
 | `-ImportSkip <n>` | `0` | Skip account B import rows. |
 | `-AssumeYes` | Off | Passed to account B import. |
 | `-AllowDuplicates` | Off | Passed to account B import. |
+| `-KeepSuperseded` | Off | Passed to account B import; keep older target copies instead of replacing them. |
 | `-NoPause` | Off | Do not wait for Enter at the end. |
 
 #### `run-account-a-to-b-full-sync.cmd`
@@ -1011,8 +1018,9 @@ outputs/chatgpt-account-b-import-report_yyyy-MM-dd_HH-mm-ss.csv
 Important statuses:
 
 - `imported`: prompt sent and account B `/c/{id}` observed.
+- `updated`: the source conversation version changed; a fresh target copy was imported and the older target copy was hidden by default.
 - `dry-run`: no real import was performed.
-- `would_update`: dry-run found a historical import, but the source conversation version changed and would be re-imported in a real run.
+- `would_update`: dry-run found a historical import, but the source conversation version changed and would be re-imported and replace the old copy in a real run.
 - `duplicate`: confirmed duplicate skipped.
 - `duplicate_suspected`: likely duplicate skipped.
 - `error`: import failed.
@@ -1055,7 +1063,7 @@ Browser profiles may contain cookies and login state. Reports may contain chat t
 | No usable `share_url` | Check the account A export report; project-only reports can still be used by project restore. |
 | Account A export has `skipped_unavailable` | ChatGPT listed the project conversation, but the detail endpoint was unreadable or rate-limited. This is not a script failure; retry later with `-Skip` and `-Limit` if those conversations matter. |
 | Import does not become `imported` | The page did not reach a B-account `/c/{id}` URL; inspect `error` and try a single-link manual test. |
-| Duplicate rows are skipped | This is the default safety behavior. If source version metadata changed, dry-run reports `would_update`; use `-AllowDuplicates` only if duplicate copies are acceptable. |
+| Duplicate rows are skipped | This is the default safety behavior. If source version metadata changed, dry-run reports `would_update`; a real run imports the latest copy and hides the older copy. Use `-KeepSuperseded` only when you intentionally want to keep the old copy, and `-AllowDuplicates` only if duplicate copies are acceptable. |
 | `missing_local_file` during attachment restore | Re-run account A export without `-SkipProjectFiles`, then restore again. |
 | `File uploaded but attach failed` during attachment restore | The file upload may have completed, but the project-file binding API rejected the payload or verification could not see the attachment. Re-run restore once; if it persists, inspect `attachment_results[].error` in the latest restore report. |
 | Project creation fails | Check whether the target account supports projects and whether ChatGPT Web changed project APIs. |

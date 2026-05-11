@@ -4,6 +4,21 @@
 
 - No unreleased changes.
 
+## v0.1.2 - 2026-05-11
+
+### Added
+
+- Added source-version-aware re-import for previously synced conversations: when account A's `current_node_id` or `update_time` changes, account B import now creates the latest copy, marks the row `updated`, and hides the superseded target copy by default.
+
+### Changed
+
+- Added `-KeepSuperseded` for users who intentionally want to keep older target copies during an update run.
+
+### Fixed
+
+- Hardened account A session reads so export and self-test retry the refreshed session endpoint before failing on transient ChatGPT session errors.
+- Hardened project restore API calls so transient ChatGPT authorization failures refresh the browser session before reporting an error.
+
 ## v0.1.1 - 2026-05-10
 
 ### Added

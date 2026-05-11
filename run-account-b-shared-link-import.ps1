@@ -8,6 +8,7 @@ param(
   [int]$Port = 9228,
   [switch]$AssumeYes,
   [switch]$AllowDuplicates,
+  [switch]$KeepSuperseded,
   [switch]$NoPause
 )
 
@@ -479,7 +480,15 @@ function Add-DuplicateRecord {
   }
 
   $recordSourceState = $null
-  if (-not $BrowserMatch) {
+  if ($BrowserMatch) {
+    $recordSourceState = [pscustomobject]@{
+      source_id = ""
+      source_update_time = ""
+      source_current_node_id = ""
+      source_share_id = ""
+      source_share_url = ""
+    }
+  } else {
     if ($status -match "^(duplicate|duplicate_suspected)$") {
       $recordSourceState = Get-MatchedSourceState -Row $Row
     } else {
@@ -997,8 +1006,10 @@ function Export-Report {
       source_update_time = $_.source_update_time
       source_current_node_id = $_.source_current_node_id
       sync_mode = $_.sync_mode
+      sync_reason = $_.sync_reason
       previous_imported_id = $_.previous_imported_id
       previous_imported_url = $_.previous_imported_url
+      superseded_action = $_.superseded_action
       imported_id = $_.imported_id
       imported_url = $_.imported_url
       source = $_.source
@@ -1324,6 +1335,55 @@ function Invoke-SendMigrationPrompt {
   return Invoke-CdpJsonExpression -WebSocket $WebSocket -Expression $expression
 }
 
+function Invoke-HideSupersededConversation {
+  param(
+    [System.Net.WebSockets.ClientWebSocket]$WebSocket,
+    [string]$ConversationId
+  )
+
+  if ([string]::IsNullOrWhiteSpace($ConversationId)) {
+    return [pscustomobject]@{
+      ok = $false
+      status = "missing-id"
+      error = "Missing previous imported conversation ID."
+    }
+  }
+
+  $conversationIdJson = $ConversationId | ConvertTo-Json -Compress
+  $expression = @"
+(async () => {
+  const conversationId = $conversationIdJson;
+  const sessionResponse = await fetch("/api/auth/session", { credentials: "include" });
+  if (!sessionResponse.ok) {
+    return JSON.stringify({ ok: false, status: sessionResponse.status, stage: "session" });
+  }
+  const session = await sessionResponse.json();
+  const token = session && session.accessToken;
+  if (!token) return JSON.stringify({ ok: false, status: "missing-token", stage: "session" });
+
+  const response = await fetch("/backend-api/conversation/" + encodeURIComponent(conversationId), {
+    method: "PATCH",
+    credentials: "include",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      authorization: "Bearer " + token
+    },
+    body: JSON.stringify({ is_visible: false })
+  });
+  const text = await response.text().catch(() => "");
+  return JSON.stringify({
+    ok: response.ok,
+    status: response.status,
+    stage: "hide",
+    error: response.ok ? "" : text.slice(0, 500)
+  });
+})()
+"@
+
+  return Invoke-CdpJsonExpression -WebSocket $WebSocket -Expression $expression
+}
+
 function Find-RecentConversationByTitle {
   param(
     [System.Net.WebSockets.ClientWebSocket]$WebSocket,
@@ -1507,7 +1567,8 @@ function Invoke-OrchestratedImport {
     [bool]$DryRunMode,
     [string]$PromptText,
     $DuplicateIndex,
-    [bool]$AllowDuplicateItems
+    [bool]$AllowDuplicateItems,
+    [bool]$KeepSupersededItems
   )
 
   $startedAt = Get-Date
@@ -1529,6 +1590,7 @@ function Invoke-OrchestratedImport {
     $syncMode = "create"
     $previousImportedId = ""
     $previousImportedUrl = ""
+
     if (-not $AllowDuplicateItems) {
       $duplicate = Find-DuplicateImportItem -Item $item -Index $DuplicateIndex
     }
@@ -1538,48 +1600,50 @@ function Invoke-OrchestratedImport {
       $previousImportedId = Safe-Text $duplicate.match_imported_id
       $previousImportedUrl = Safe-Text $duplicate.match_imported_url
       if ($versionComparison.should_update) {
-        $syncMode = "update"
+        $syncMode = if ($KeepSupersededItems) { "update_keep_previous" } else { "update_replace" }
         Write-Host "[update] $title :: $($versionComparison.reason)" -ForegroundColor Cyan
       } else {
-      $timer.Stop()
+        $timer.Stop()
         $skipReason = $duplicate.reason
         if (-not [string]::IsNullOrWhiteSpace((Safe-Text $versionComparison.reason))) {
           $skipReason = "$skipReason $($versionComparison.reason)"
         }
         Write-Host "[skip:$($duplicate.status)] $title :: $skipReason" -ForegroundColor Yellow
-      $results += [pscustomobject]@{
-        status = $duplicate.status
-        id = $item.id
-        title = $title
-        project_name = $item.project_name
-        project_id = $item.project_id
-        project_source = $item.project_source
-        source = $item.source
-        share_url = $item.share_url
+        $results += [pscustomobject]@{
+          status = $duplicate.status
+          id = $item.id
+          title = $title
+          project_name = $item.project_name
+          project_id = $item.project_id
+          project_source = $item.project_source
+          source = $item.source
+          share_url = $item.share_url
           source_update_time = $item.source_update_time
           source_current_node_id = $item.source_current_node_id
           sync_mode = "skip"
+          sync_reason = $skipReason
           previous_imported_id = $previousImportedId
           previous_imported_url = $previousImportedUrl
-        imported_id = $duplicate.match_imported_id
-        imported_url = $duplicate.match_imported_url
-        elapsed_seconds = [math]::Round($timer.Elapsed.TotalSeconds)
+          superseded_action = ""
+          imported_id = $duplicate.match_imported_id
+          imported_url = $duplicate.match_imported_url
+          elapsed_seconds = [math]::Round($timer.Elapsed.TotalSeconds)
           duplicate_reason = $skipReason
-        duplicate_match_source = $duplicate.match_source
-        duplicate_match_status = $duplicate.match_status
+          duplicate_match_source = $duplicate.match_source
+          duplicate_match_status = $duplicate.match_status
           duplicate_match_source_update_time = $duplicate.match_source_update_time
           duplicate_match_source_current_node_id = $duplicate.match_source_current_node_id
-        duplicate_match_title = $duplicate.match_title
-        duplicate_match_project_name = $duplicate.match_project_name
-        error = ""
-      }
-      continue
+          duplicate_match_title = $duplicate.match_title
+          duplicate_match_project_name = $duplicate.match_project_name
+          error = ""
+        }
+        continue
       }
     }
 
     if ($DryRunMode) {
       $results += [pscustomobject]@{
-        status = if ($syncMode -eq "update") { "would_update" } else { "dry-run" }
+        status = if ($syncMode -like "update*") { "would_update" } else { "dry-run" }
         id = $item.id
         title = $title
         project_name = $item.project_name
@@ -1590,8 +1654,10 @@ function Invoke-OrchestratedImport {
         source_update_time = $item.source_update_time
         source_current_node_id = $item.source_current_node_id
         sync_mode = $syncMode
+        sync_reason = if ($versionComparison) { $versionComparison.reason } else { "" }
         previous_imported_id = $previousImportedId
         previous_imported_url = $previousImportedUrl
+        superseded_action = if ($syncMode -eq "update_replace") { "would_hide_previous" } elseif ($syncMode -eq "update_keep_previous") { "would_keep_previous" } else { "" }
         imported_id = ""
         imported_url = ""
         elapsed_seconds = 0
@@ -1679,11 +1745,30 @@ function Invoke-OrchestratedImport {
         throw "发送触发消息后没有进入 B 账号 /c/{id} 对话页，当前页面：$importedUrl，证据：$($sendResult.evidence)。不会把共享链接页当作导入成功。"
       }
 
+      $supersededAction = ""
+      if ($syncMode -eq "update_replace") {
+        if ([string]::IsNullOrWhiteSpace($previousImportedId)) {
+          throw "已导入最新副本，但缺少旧副本 imported_id，无法覆盖原记录。"
+        }
+        if ($previousImportedId -eq $importedId) {
+          $supersededAction = "same_conversation"
+        } else {
+          $hideResult = Invoke-HideSupersededConversation -WebSocket $WebSocket -ConversationId $previousImportedId
+          if (-not $hideResult.ok) {
+            throw "已导入最新副本，但隐藏旧副本失败：$previousImportedId，阶段：$($hideResult.stage)，状态：$($hideResult.status)，错误：$($hideResult.error)"
+          }
+          $supersededAction = "hidden_previous"
+          Write-Host "[replace] 已隐藏旧副本：$previousImportedId" -ForegroundColor Cyan
+        }
+      } elseif ($syncMode -eq "update_keep_previous") {
+        $supersededAction = "kept_previous"
+      }
+
       $timer.Stop()
 
       Write-Host "[ok] $title -> $importedUrl ($($sendResult.evidence))"
       $results += [pscustomobject]@{
-        status = "imported"
+        status = if ($syncMode -like "update*") { "updated" } else { "imported" }
         id = $item.id
         title = $title
         project_name = $item.project_name
@@ -1694,8 +1779,10 @@ function Invoke-OrchestratedImport {
         source_update_time = $item.source_update_time
         source_current_node_id = $item.source_current_node_id
         sync_mode = $syncMode
+        sync_reason = if ($versionComparison) { $versionComparison.reason } else { "" }
         previous_imported_id = $previousImportedId
         previous_imported_url = $previousImportedUrl
+        superseded_action = $supersededAction
         imported_id = $importedId
         imported_url = $importedUrl
         elapsed_seconds = [math]::Round($timer.Elapsed.TotalSeconds)
@@ -1730,8 +1817,10 @@ function Invoke-OrchestratedImport {
         source_update_time = $item.source_update_time
         source_current_node_id = $item.source_current_node_id
         sync_mode = $syncMode
+        sync_reason = if ($versionComparison) { $versionComparison.reason } else { "" }
         previous_imported_id = $previousImportedId
         previous_imported_url = $previousImportedUrl
+        superseded_action = ""
         imported_id = Get-ConversationIdFromUrl -Url $currentHref
         imported_url = $currentHref
         elapsed_seconds = [math]::Round($timer.Elapsed.TotalSeconds)
@@ -1751,6 +1840,7 @@ function Invoke-OrchestratedImport {
 
   $finishedAt = Get-Date
   $importedCount = @($results | Where-Object { $_.status -eq "imported" }).Count
+  $updatedCount = @($results | Where-Object { $_.status -eq "updated" }).Count
   $dryRunCount = @($results | Where-Object { $_.status -eq "dry-run" }).Count
   $wouldUpdateCount = @($results | Where-Object { $_.status -eq "would_update" }).Count
   $duplicateCount = @($results | Where-Object { $_.status -eq "duplicate" }).Count
@@ -1770,7 +1860,7 @@ function Invoke-OrchestratedImport {
   }
 
   return [pscustomobject]@{
-    schema = "chatgpt-shared-link-import-v1"
+    schema = "chatgpt-shared-link-import-v2"
     generated_at = $finishedAt.ToString("o")
     account_hint = "account B in current browser session"
     config = [pscustomobject]@{
@@ -1778,6 +1868,8 @@ function Invoke-OrchestratedImport {
       promptText = $PromptText
       delayMs = 1500
       duplicateCheck = (-not $AllowDuplicateItems)
+      updatedSourceCheck = (-not $AllowDuplicateItems)
+      replaceSuperseded = (-not $KeepSupersededItems)
       priorDuplicateReports = if ($DuplicateIndex) { $DuplicateIndex.PriorReportCount } else { 0 }
       browserConversationsScanned = if ($DuplicateIndex) { $DuplicateIndex.BrowserConversationCount } else { 0 }
     }
@@ -1785,6 +1877,7 @@ function Invoke-OrchestratedImport {
       input = $total
       processed = @($results).Count
       imported = $importedCount
+      updated = $updatedCount
       dry_run = $dryRunCount
       would_update = $wouldUpdateCount
       duplicates = $duplicateCount
@@ -1921,7 +2014,11 @@ try {
     $updatePreview = @($duplicatePreview | Where-Object { $_.version.should_update }).Count
     $confirmedPreview = @($duplicatePreview | Where-Object { -not $_.version.should_update -and $_.duplicate.status -eq "duplicate" }).Count
     $suspectedPreview = @($duplicatePreview | Where-Object { -not $_.version.should_update -and $_.duplicate.status -eq "duplicate_suspected" }).Count
-    Write-Host "将重新导入源版本已变化记录：$updatePreview 条"
+    if ($KeepSuperseded) {
+      Write-Host "将重新导入源版本已变化记录：$updatePreview 条（保留旧副本）"
+    } else {
+      Write-Host "将重新导入源版本已变化记录：$updatePreview 条（成功后隐藏旧副本）"
+    }
     Write-Host "将跳过确定重复：$confirmedPreview 条"
     Write-Host "将跳过疑似重复：$suspectedPreview 条"
   } else {
@@ -1941,7 +2038,7 @@ try {
   }
 
   Write-Step "开始 B 账号自动导入"
-  $report = Invoke-OrchestratedImport -WebSocket $ws -Items $items -DryRunMode ([bool]$DryRun) -PromptText $Prompt -DuplicateIndex $duplicateIndex -AllowDuplicateItems ([bool]$AllowDuplicates)
+  $report = Invoke-OrchestratedImport -WebSocket $ws -Items $items -DryRunMode ([bool]$DryRun) -PromptText $Prompt -DuplicateIndex $duplicateIndex -AllowDuplicateItems ([bool]$AllowDuplicates) -KeepSupersededItems ([bool]$KeepSuperseded)
   $report | Add-Member -NotePropertyName source_json -NotePropertyValue $resolvedInputJson -Force
   $report | Add-Member -NotePropertyName source_projects -NotePropertyValue $sourceProjects -Force
   $report.summary | Add-Member -NotePropertyName source_projects -NotePropertyValue @($sourceProjects).Count -Force
@@ -1950,6 +2047,7 @@ try {
 
   Write-Step "完成"
   Write-Host "导入成功：$($report.summary.imported) 条"
+  Write-Host "更新替换：$($report.summary.updated) 条"
   Write-Host "Dry run：$($report.summary.dry_run) 条"
   Write-Host "源版本变化待更新：$($report.summary.would_update) 条"
   Write-Host "确定重复跳过：$($report.summary.duplicates) 条"

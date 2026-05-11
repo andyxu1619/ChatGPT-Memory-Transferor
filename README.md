@@ -6,12 +6,13 @@ ChatGPT Memory Transferor is an experimental Windows toolkit for copying ChatGPT
 
 This is not an official OpenAI or ChatGPT migration API. It uses the ChatGPT web app through your local browser login state.
 
-Current version: v0.1.1. See [CHANGELOG.md](CHANGELOG.md).
+Current version: v0.1.2. See [CHANGELOG.md](CHANGELOG.md).
 
 ## What it does
 
 - Creates shared links from source-account conversations.
 - Imports shared-link conversations into a target account by opening them in a dedicated browser profile.
+- Replaces previously imported target copies when the source conversation has new messages.
 - Exports project metadata from the source account.
 - Restores imported conversations into target-account projects when possible.
 - Handles project attachment download and re-upload helpers for non-sensitive testable samples.
@@ -50,7 +51,7 @@ This project is experimental and depends on ChatGPT Web behavior, shared-link be
 
 - Project-only conversations that ChatGPT lists but does not return from the detail endpoint are reported as `skipped_unavailable`, not as export failures.
 - Account B imports are treated as successful only after the browser reaches a usable `/c/{id}` conversation URL.
-- Duplicate detection compares source `current_node_id` or `update_time` when history has enough metadata, so updated source conversations can be reported as `would_update` in dry-run mode instead of being silently skipped as unchanged duplicates.
+- Duplicate detection compares source `current_node_id` or `update_time` when history has enough metadata. Updated source conversations are reported as `would_update` in dry-run mode; real import creates a fresh target copy, marks it `updated`, and hides the superseded target copy unless `-KeepSuperseded` is used.
 - Project attachment restore uses the current project-file binding payload and fails loudly if upload, binding, or verification still has errors.
 
 ## Requirements
@@ -67,6 +68,8 @@ This project is experimental and depends on ChatGPT Web behavior, shared-link be
 git clone https://github.com/example-user/ChatGPT-Memory-Transferor.git
 cd ChatGPT-Memory-Transferor
 ```
+
+Replace `example-user` with the repository owner or fork you intend to use.
 
 No dependency install command is required. The repository runs directly from the checked-out PowerShell, JavaScript, and HTML files.
 

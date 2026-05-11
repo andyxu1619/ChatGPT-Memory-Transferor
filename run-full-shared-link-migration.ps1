@@ -7,6 +7,7 @@ param(
   [int]$ImportSkip = 0,
   [switch]$AssumeYes,
   [switch]$AllowDuplicates,
+  [switch]$KeepSuperseded,
   [switch]$NoPause
 )
 
@@ -124,6 +125,9 @@ try {
     }
     if ($AllowDuplicates) {
       $importArgs["AllowDuplicates"] = $true
+    }
+    if ($KeepSuperseded) {
+      $importArgs["KeepSuperseded"] = $true
     }
 
     & $importScript @importArgs

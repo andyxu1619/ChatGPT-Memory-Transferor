@@ -559,30 +559,44 @@ function Invoke-ProjectRestore {
     return key.toLowerCase().includes("token") ? "[redacted]" : innerValue;
   });
 
-  async function getAccessToken() {
-    const response = await fetch("/api/auth/session", {
-      credentials: "include",
-      headers: { accept: "application/json" }
-    });
-    if (!response.ok) {
-      throw new Error("Cannot read ChatGPT session: HTTP " + response.status);
+  async function getAccessToken(reason = "gptsync_project_restore") {
+    async function readSession(url) {
+      const response = await fetch(url, {
+        credentials: "include",
+        headers: { accept: "application/json" }
+      });
+      if (!response.ok) return { ok: false, status: response.status };
+      return { ok: true, session: await response.json() };
     }
-    const session = await response.json();
-    if (!session || !session.accessToken) {
+
+    let result = await readSession("/api/auth/session");
+    if (!result.ok) {
+      result = await readSession("/api/auth/session?refresh=true&reason=" + encodeURIComponent(reason));
+    }
+    for (let attempt = 0; !result.ok && attempt < 2; attempt += 1) {
+      await sleep(1200 * (attempt + 1));
+      result = await readSession("/api/auth/session?refresh=true&reason=" + encodeURIComponent(reason + "_retry"));
+    }
+    if (!result.ok) {
+      throw new Error("Cannot read ChatGPT session: HTTP " + result.status);
+    }
+
+    const sessionPayload = result.session;
+    if (!sessionPayload || !sessionPayload.accessToken) {
       throw new Error("No accessToken found. Confirm this browser window is logged in to account B.");
     }
     return {
-      accessToken: session.accessToken,
+      accessToken: sessionPayload.accessToken,
       account: {
-        planType: session.account && session.account.planType || "",
-        structure: session.account && session.account.structure || ""
+        planType: sessionPayload.account && sessionPayload.account.planType || "",
+        structure: sessionPayload.account && sessionPayload.account.structure || ""
       }
     };
   }
 
-  const session = await getAccessToken();
+  let session = await getAccessToken();
 
-  async function api(path, options = {}) {
+  async function api(path, options = {}, attempt = 0) {
     const response = await fetch(path, {
       credentials: "include",
       ...options,
@@ -596,6 +610,15 @@ function Invoke-ProjectRestore {
     const text = await response.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    if ((response.status === 401 || response.status === 403) && attempt < 2) {
+      await sleep(1200 * (attempt + 1));
+      session = await getAccessToken("gptsync_project_restore_api_retry");
+      return api(path, options, attempt + 1);
+    }
+    if ((response.status === 429 || response.status >= 500) && attempt < 2) {
+      await sleep(1200 * (attempt + 1));
+      return api(path, options, attempt + 1);
+    }
     if (!response.ok) {
       const message = typeof data === "string" ? data : redact(data);
       throw new Error("HTTP " + response.status + " " + path + ": " + message.slice(0, 500));

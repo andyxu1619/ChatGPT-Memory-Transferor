@@ -275,11 +275,29 @@ function Invoke-ReadOnlyApiSelfTest {
   $expression = @'
 (async () => {
   const result = await (async () => {
-    const sessionResponse = await fetch('/api/auth/session', { credentials: 'include' });
-    if (!sessionResponse.ok) {
-      return { ok: false, stage: 'session', status: sessionResponse.status };
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    async function readSession(url) {
+      const response = await fetch(url, {
+        credentials: 'include',
+        headers: { accept: 'application/json' }
+      });
+      if (!response.ok) return { ok: false, status: response.status };
+      return { ok: true, session: await response.json() };
     }
-    const session = await sessionResponse.json();
+
+    let sessionResult = await readSession('/api/auth/session');
+    if (!sessionResult.ok) {
+      sessionResult = await readSession('/api/auth/session?refresh=true&reason=gptsync_account_a_selftest');
+    }
+    for (let attempt = 0; !sessionResult.ok && attempt < 2; attempt += 1) {
+      await sleep(1200 * (attempt + 1));
+      sessionResult = await readSession('/api/auth/session?refresh=true&reason=gptsync_account_a_selftest_retry');
+    }
+    if (!sessionResult.ok) {
+      return { ok: false, stage: 'session', status: sessionResult.status };
+    }
+
+    const session = sessionResult.session;
     const token = session && session.accessToken;
     if (!token) return { ok: false, stage: 'token' };
 

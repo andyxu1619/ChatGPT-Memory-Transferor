@@ -51,16 +51,28 @@
   }
 
   async function getAccessToken() {
-    const response = await fetch("/api/auth/session", {
-      credentials: "include",
-      headers: { accept: "application/json" }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Cannot read ChatGPT session: HTTP ${response.status}`);
+    async function readSession(url) {
+      const response = await fetch(url, {
+        credentials: "include",
+        headers: { accept: "application/json" }
+      });
+      if (!response.ok) return { ok: false, status: response.status };
+      return { ok: true, session: await response.json() };
     }
 
-    const session = await response.json();
+    let result = await readSession("/api/auth/session");
+    if (!result.ok) {
+      result = await readSession("/api/auth/session?refresh=true&reason=gptsync_account_a_export");
+    }
+    for (let attempt = 0; !result.ok && attempt < 2; attempt += 1) {
+      await sleep(CONFIG.delayMs * (attempt + 1));
+      result = await readSession("/api/auth/session?refresh=true&reason=gptsync_account_a_export_retry");
+    }
+    if (!result.ok) {
+      throw new Error(`Cannot read ChatGPT session: HTTP ${result.status}`);
+    }
+
+    const session = result.session;
     if (!session?.accessToken) {
       throw new Error("No accessToken found. Confirm this browser window is logged in to account A.");
     }

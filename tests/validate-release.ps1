@@ -246,6 +246,177 @@ function Test-MarkdownLocalLinks {
   }
 }
 
+function Test-VersionAwareImportBehavior {
+  $scriptPath = Join-Path $repoRoot "run-account-b-shared-link-import.ps1"
+  $tokens = $null
+  $errors = $null
+  $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$errors)
+  foreach ($errorItem in @($errors)) {
+    Add-Failure "Cannot load B import functions for behavior test: $($errorItem.Message)"
+  }
+  if (@($errors).Count -gt 0) {
+    return
+  }
+
+  try {
+    $functions = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
+    $functionBlock = [scriptblock]::Create(($functions | ForEach-Object { $_.Extent.Text }) -join "`n`n")
+    . $functionBlock
+
+    function Assert-Behavior {
+      param(
+        [bool]$Condition,
+        [string]$Message
+      )
+
+      if (-not $Condition) {
+        Add-Failure $Message
+      }
+    }
+
+    function New-TestDuplicateIndex {
+      $index = New-DuplicateIndex
+      $oldRow = [pscustomobject]@{
+        status = "imported"
+        id = "source-1"
+        title = "Changed Chat"
+        project_name = "Demo Project"
+        share_url = "https://chatgpt.com/share/synthetic-update-check"
+        imported_id = "11111111-1111-1111-1111-111111111111"
+        imported_url = "https://chatgpt.com/c/11111111-1111-1111-1111-111111111111"
+        source_update_time = "2026-05-10T10:00:00Z"
+        source_current_node_id = "old-node"
+        source_share_id = "share-1"
+        source_share_url = "https://chatgpt.com/share/synthetic-update-check"
+      }
+      Add-DuplicateRecord -Index $index -Row $oldRow -MatchSource "synthetic-history.json" -SourceState (Get-SourceState -Row $oldRow)
+      return $index
+    }
+
+    function New-TestImportItem {
+      param(
+        [string]$NodeId,
+        [string]$UpdateTime
+      )
+
+      [pscustomobject]@{
+        id = "source-1"
+        title = "Changed Chat"
+        project_name = "Demo Project"
+        project_id = "project-1"
+        project_source = "project"
+        source = "account-a"
+        share_id = "share-1"
+        share_url = "https://chatgpt.com/share/synthetic-update-check"
+        source_update_time = $UpdateTime
+        source_current_node_id = $NodeId
+        source_share_id = "share-1"
+      }
+    }
+
+    $changedItem = New-TestImportItem -NodeId "new-node" -UpdateTime "2026-05-10T11:00:00Z"
+    $dryRunReport = Invoke-OrchestratedImport -WebSocket $null -Items @($changedItem) -DryRunMode $true -PromptText "test" -DuplicateIndex (New-TestDuplicateIndex) -AllowDuplicateItems $false -KeepSupersededItems $false 6>$null
+    $dryRunRow = @($dryRunReport.results)[0]
+    Assert-Behavior ($dryRunRow.status -eq "would_update") "Changed source conversation must be reported as would_update in dry-run."
+    Assert-Behavior ($dryRunRow.sync_mode -eq "update_replace") "Default changed-source dry-run must plan update_replace."
+    Assert-Behavior ($dryRunRow.superseded_action -eq "would_hide_previous") "Default changed-source dry-run must plan to hide the previous target copy."
+    Assert-Behavior ($dryRunRow.previous_imported_id -eq "11111111-1111-1111-1111-111111111111") "Changed-source dry-run must preserve the previous imported_id."
+    Assert-Behavior ($dryRunReport.summary.would_update -eq 1 -and $dryRunReport.summary.duplicates -eq 0 -and $dryRunReport.summary.errors -eq 0) "Changed-source dry-run summary counts are incorrect."
+
+    $sameItem = New-TestImportItem -NodeId "old-node" -UpdateTime "2026-05-10T10:00:00Z"
+    $duplicateReport = Invoke-OrchestratedImport -WebSocket $null -Items @($sameItem) -DryRunMode $true -PromptText "test" -DuplicateIndex (New-TestDuplicateIndex) -AllowDuplicateItems $false -KeepSupersededItems $false 6>$null
+    $duplicateRow = @($duplicateReport.results)[0]
+    Assert-Behavior ($duplicateRow.status -eq "duplicate") "Unchanged source conversation must still be skipped as duplicate."
+    Assert-Behavior ($duplicateRow.sync_mode -eq "skip") "Unchanged duplicate must use skip sync_mode."
+    Assert-Behavior ($duplicateReport.summary.duplicates -eq 1 -and $duplicateReport.summary.would_update -eq 0 -and $duplicateReport.summary.errors -eq 0) "Unchanged duplicate summary counts are incorrect."
+
+    function Start-Sleep {
+      param(
+        [int]$Seconds,
+        [int]$Milliseconds
+      )
+    }
+    function Invoke-Cdp {
+      param(
+        [System.Net.WebSockets.ClientWebSocket]$WebSocket,
+        [string]$Method,
+        [hashtable]$Params = @{}
+      )
+      [pscustomobject]@{}
+    }
+    function Wait-DocumentReady {
+      param(
+        [System.Net.WebSockets.ClientWebSocket]$WebSocket,
+        [int]$TimeoutSec
+      )
+      return $true
+    }
+    function Invoke-OpenSharedComposer {
+      param([System.Net.WebSockets.ClientWebSocket]$WebSocket)
+      [pscustomobject]@{
+        unavailable = $false
+        hasComposer = $true
+        clicked = $false
+        message = ""
+      }
+    }
+    function Invoke-SendMigrationPrompt {
+      param(
+        [System.Net.WebSockets.ClientWebSocket]$WebSocket,
+        [string]$PromptText
+      )
+      [pscustomobject]@{
+        ok = $true
+        href = "https://chatgpt.com/c/22222222-2222-2222-2222-222222222222"
+        evidence = "mock"
+      }
+    }
+    function Get-PageHref {
+      param([System.Net.WebSockets.ClientWebSocket]$WebSocket)
+      return "https://chatgpt.com/c/22222222-2222-2222-2222-222222222222"
+    }
+    function Invoke-HideSupersededConversation {
+      param(
+        [System.Net.WebSockets.ClientWebSocket]$WebSocket,
+        [string]$ConversationId
+      )
+      [pscustomobject]@{
+        ok = $true
+        stage = "hide"
+        status = 200
+        error = ""
+      }
+    }
+
+    $updatedReport = Invoke-OrchestratedImport -WebSocket $null -Items @($changedItem) -DryRunMode $false -PromptText "test" -DuplicateIndex (New-TestDuplicateIndex) -AllowDuplicateItems $false -KeepSupersededItems $false 6>$null
+    $updatedRow = @($updatedReport.results)[0]
+    Assert-Behavior ($updatedRow.status -eq "updated") "Changed source real import must report updated after a successful replacement."
+    Assert-Behavior ($updatedRow.superseded_action -eq "hidden_previous") "Successful changed-source replacement must record hidden_previous."
+    Assert-Behavior ($updatedReport.summary.updated -eq 1 -and $updatedReport.summary.errors -eq 0) "Successful changed-source replacement summary counts are incorrect."
+
+    function Invoke-HideSupersededConversation {
+      param(
+        [System.Net.WebSockets.ClientWebSocket]$WebSocket,
+        [string]$ConversationId
+      )
+      [pscustomobject]@{
+        ok = $false
+        stage = "hide"
+        status = 500
+        error = "mock-hide-failed"
+      }
+    }
+
+    $failedHideReport = Invoke-OrchestratedImport -WebSocket $null -Items @($changedItem) -DryRunMode $false -PromptText "test" -DuplicateIndex (New-TestDuplicateIndex) -AllowDuplicateItems $false -KeepSupersededItems $false 6>$null
+    $failedHideRow = @($failedHideReport.results)[0]
+    Assert-Behavior ($failedHideRow.status -eq "error") "Changed source import must report error if hiding the previous target copy fails."
+    Assert-Behavior ($failedHideRow.error -match "隐藏旧副本失败") "Hide failure error must explain that the previous target copy was not hidden."
+    Assert-Behavior ($failedHideReport.summary.updated -eq 0 -and $failedHideReport.summary.errors -eq 1) "Hide failure summary counts must not pretend the update succeeded."
+  } catch {
+    Add-Failure "Version-aware import behavior test failed unexpectedly: $($_.Exception.Message)"
+  }
+}
+
 Set-Location -LiteralPath $repoRoot
 
 $trackedFiles = Invoke-GitLines -Arguments @("ls-files")
@@ -276,17 +447,21 @@ Assert-Contains -Content $bImportScript -Pattern "不会把共享链接页当作
 Assert-Contains -Content $bImportScript -Pattern "match_imported_id" -Message "Duplicate detection must preserve imported conversation IDs."
 Assert-Contains -Content $bImportScript -Pattern "Compare-SourceVersion" -Message "Duplicate detection must compare source version metadata."
 Assert-Contains -Content $bImportScript -Pattern "would_update" -Message "Duplicate dry runs must report updated source conversations."
+Assert-Contains -Content $bImportScript -Pattern "Invoke-HideSupersededConversation" -Message "B import must hide superseded target copies after updated imports."
 
 $aExportScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "run-account-a-share-link-export.ps1")
 Assert-Contains -Content $aExportScript -Pattern "Invoke-BrowserDownloadFile" -Message "A export must have a browser-download fallback for project files."
+Assert-Contains -Content $aExportScript -Pattern "gptsync_account_a_selftest" -Message "A export self-test must retry session refresh before failing."
 
 $aExportInjector = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "account-a-create-share-links-cdp.js")
 Assert-Contains -Content $aExportInjector -Pattern "skipped_unavailable" -Message "A export must classify unreadable project-only conversations as skipped, not export errors."
+Assert-Contains -Content $aExportInjector -Pattern "gptsync_account_a_export" -Message "A CDP export must retry session refresh before failing."
 
 $restoreScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "run-account-b-restore-projects.ps1")
 Assert-Contains -Content $restoreScript -Pattern "Duplicate rows can carry usable imported IDs" -Message "Project restore must keep duplicate rows with usable imported IDs eligible."
 Assert-Contains -Content $restoreScript -Pattern "sharing: normalizeSharing" -Message "Project creation must send the required sharing payload."
 Assert-Contains -Content $restoreScript -Pattern "File uploaded but attach failed" -Message "Project attachment upload must fail loudly when upload succeeds but project binding cannot be verified."
+Assert-Contains -Content $restoreScript -Pattern "gptsync_project_restore_api_retry" -Message "Project restore must refresh session before failing on transient API authorization errors."
 
 $gitignorePath = Join-Path $repoRoot ".gitignore"
 if (-not (Test-Path -LiteralPath $gitignorePath)) {
@@ -334,7 +509,7 @@ $readmePath = Join-Path $repoRoot "README.md"
 if (Test-Path -LiteralPath $readmePath) {
   $readme = Get-Content -Raw -LiteralPath $readmePath
   Assert-Contains -Content $readme -Pattern "# ChatGPT Memory Transferor" -Message "README must use the official project name."
-  Assert-Contains -Content $readme -Pattern $expectedCloneUrl -Message "README clone URL must point to the real GitHub repository."
+  Assert-Contains -Content $readme -Pattern $expectedCloneUrl -Message "README clone URL must use the public placeholder repository address."
   Assert-Contains -Content $readme -Pattern "README.zh-CN.md" -Message "README must link to the Chinese README."
   Assert-Contains -Content $readme -Pattern "docs/project-details.md" -Message "README must link to docs/project-details.md."
 
@@ -375,7 +550,7 @@ $chineseReadmePath = Join-Path $repoRoot "README.zh-CN.md"
 if (Test-Path -LiteralPath $chineseReadmePath) {
   $chineseReadme = Get-Content -Raw -LiteralPath $chineseReadmePath
   Assert-Contains -Content $chineseReadme -Pattern "# ChatGPT Memory Transferor" -Message "Chinese README must use the official project name."
-  Assert-Contains -Content $chineseReadme -Pattern $expectedCloneUrl -Message "Chinese README clone URL must point to the real GitHub repository."
+  Assert-Contains -Content $chineseReadme -Pattern $expectedCloneUrl -Message "Chinese README clone URL must use the public placeholder repository address."
   Assert-Contains -Content $chineseReadme -Pattern "README.md" -Message "Chinese README must link back to the English README."
   Assert-Contains -Content $chineseReadme -Pattern "docs/project-details.md" -Message "Chinese README must link to docs/project-details.md."
   Assert-Contains -Content $chineseReadme -Pattern $securityEmail -Message "Chinese README must contain the security contact email."
@@ -393,6 +568,7 @@ Test-ContentSafety -TextFiles $trackedTextFiles
 Test-RepositoryPlaceholders -TextFiles $trackedTextFiles
 Test-EmailConsistency -TextFiles $trackedTextFiles
 Test-MarkdownLocalLinks -TextFiles $trackedTextFiles
+Test-VersionAwareImportBehavior
 
 if ($failures.Count -gt 0) {
   Write-Host "Release validation failed:" -ForegroundColor Red

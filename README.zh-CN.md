@@ -6,12 +6,13 @@ ChatGPT Memory Transferor 是一个实验性的 Windows 工具包，用于通过
 
 本项目不是 OpenAI 或 ChatGPT 官方迁移 API。它依赖本机浏览器登录态、ChatGPT Web 页面行为和共享链接机制。
 
-当前版本：v0.1.1。详见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：v0.1.2。详见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 它能做什么
 
 - 在源账号中为可迁移对话创建共享链接。
 - 在目标账号专用浏览器 Profile 中打开共享链接并生成对话副本。
+- 当源账号已导入对话出现新消息时，替换目标账号中的旧副本。
 - 导出源账号项目元数据。
 - 在可行时把已导入对话还原到目标账号项目中。
 - 为非敏感测试样本提供项目附件下载和重新上传辅助流程。
@@ -50,7 +51,7 @@ This project is experimental and depends on ChatGPT Web behavior, shared-link be
 
 - ChatGPT 项目列表能看到、但详情接口暂时不可读的项目内对话，会记录为 `skipped_unavailable`，不会把整次 A 导出判定为失败。
 - B 账号导入只有在浏览器进入可用的 `/c/{id}` 对话地址后才算成功。
-- 重复检测会在历史记录有足够元数据时比较源对话的 `current_node_id` 或 `update_time`，源对话已更新时 dry run 会报告 `would_update`，而不是静默当作未变化重复项跳过。
+- 重复检测会在历史记录有足够元数据时比较源对话的 `current_node_id` 或 `update_time`。源对话已更新时 dry run 会报告 `would_update`；真实导入会生成最新目标副本、标记为 `updated`，并默认隐藏被替换的旧副本，除非使用 `-KeepSuperseded`。
 - 项目附件还原使用当前项目文件绑定接口要求的 payload；上传、绑定或复查仍有错误时会明确失败。
 
 ## 环境要求
@@ -67,6 +68,8 @@ This project is experimental and depends on ChatGPT Web behavior, shared-link be
 git clone https://github.com/example-user/ChatGPT-Memory-Transferor.git
 cd ChatGPT-Memory-Transferor
 ```
+
+请把 `example-user` 替换为你要使用的仓库所有者或 fork 地址。
 
 不需要执行依赖安装命令。仓库中的 PowerShell、JavaScript 和 HTML 文件可直接运行。
 
